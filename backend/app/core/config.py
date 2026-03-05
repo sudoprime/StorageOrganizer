@@ -10,11 +10,6 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql://storage_user:storage_password@db:5432/storage_organizer"
 
-    # Security
-    SECRET_KEY: str = "your-secret-key-change-in-production"
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 1 week
-
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",

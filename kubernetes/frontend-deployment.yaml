@@ -17,8 +17,8 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: storage-organizer-frontend:latest
-        imagePullPolicy: Never  # Use local image (for development)
+        image: docker.io/library/storage-organizer-frontend:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 3000
           name: http

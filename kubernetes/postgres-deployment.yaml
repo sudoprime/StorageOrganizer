@@ -48,6 +48,8 @@ spec:
             - pg_isready
             - -U
             - storage_user
+            - -d
+            - storage_organizer
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
@@ -58,6 +60,8 @@ spec:
             - pg_isready
             - -U
             - storage_user
+            - -d
+            - storage_organizer
           initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3

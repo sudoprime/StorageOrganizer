@@ -21,14 +21,12 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done;']
       containers:
       - name: backend
-        image: storage-organizer-backend:latest
-        imagePullPolicy: Never  # Use local image (for development)
+        image: docker.io/library/storage-organizer-backend:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 8000
           name: http
         env:
-        - name: DATABASE_URL
-          value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)
         - name: POSTGRES_USER
           valueFrom:
             configMapKeyRef:
@@ -44,16 +42,18 @@ spec:
             configMapKeyRef:
               name: storage-organizer-config
               key: POSTGRES_DB
-        - name: SECRET_KEY
-          valueFrom:
-            secretKeyRef:
-              name: storage-organizer-secrets
-              key: SECRET_KEY
+        - name: DATABASE_URL
+          value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)
         - name: ENVIRONMENT
           valueFrom:
             configMapKeyRef:
               name: storage-organizer-config
               key: ENVIRONMENT
+        - name: UPLOADS_DIR
+          value: /data/uploads
+        volumeMounts:
+        - name: uploads
+          mountPath: /data/uploads
         livenessProbe:
           httpGet:
             path: /health
@@ -77,3 +77,7 @@ spec:
           limits:
             memory: "512Mi"
             cpu: "500m"
+      volumes:
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: uploads-pvc

@@ -289,24 +289,40 @@ App
 
 ### Data Model
 
+The backend data model that supports this UI:
+
 ```
 Room {
-  id, name, dimensions, created_at
-  boxes[]
+  id, name, dimensions_length, dimensions_width, max_stack_height
+  stacks[]
 }
 
-Box {
-  id, name, qr_code, room_id
-  position {x, y, level}
-  dimensions {width, depth, height}
-  items[]
+Stack {
+  id, room_id, position (grid coordinate e.g. "A3")
+  bins[] (ordered by level)
+}
+
+Bin {
+  id, bin_id (auto-generated "BIN-A3F2", used as QR code data)
+  name, size, color
+  stack_id, level (top-level bins only; 1 = bottom)
+  parent_id (for nested bins; NULL for top-level)
+  weight_estimate, is_fragile
+  items[], children[] (nested sub-bins)
 }
 
 Item {
-  id, box_id, name, quantity, category, notes
-  photos[]
+  id, bin_id, name, quantity, category, description, notes
+  photo_url
 }
 ```
+
+**Key design decisions:**
+- QR codes store the bin_id string (e.g. "BIN-A3F2"), not a URL, so labels survive hosting changes
+- Bins nest via parent_id — a Plano organizer inside a Sterilite tote is just a child bin
+- Top-level bins must have a stack + level; child bins inherit location from parent
+- Multiple bins can share a level (two small bins side-by-side on one large bin)
+- Stack position is a grid coordinate string, not x/y integers — keeps it simple and human-readable
 
 ---
 

@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from typing import List, Optional
 from app.core.database import get_db
-from app.models.models import Item, Bin, Container, Room
+from app.models.models import Item, Bin, Stack
 from app.schemas.schemas import Item as ItemSchema, ItemCreate, ItemUpdate, SearchResult
 
 router = APIRouter()
@@ -19,8 +19,16 @@ def get_items(
     query = db.query(Item)
     if category:
         query = query.filter(Item.category == category)
-    items = query.offset(skip).limit(limit).all()
-    return items
+    return query.offset(skip).limit(limit).all()
+
+@router.get("/count")
+def count_items(category: Optional[str] = None, db: Session = Depends(get_db)):
+    """Get total item count"""
+    query = db.query(Item)
+    if category:
+        query = query.filter(Item.category == category)
+    return {"count": query.count()}
+
 
 @router.get("/search", response_model=List[SearchResult])
 def search_items(
@@ -29,10 +37,11 @@ def search_items(
 ):
     """
     Search for items by name, description, or notes.
-    Returns items with their bin and container information.
+    Returns items with their bin, stack, and room information.
     """
-    # Search in item name, description, and notes
-    items = db.query(Item).filter(
+    items = db.query(Item).options(
+        joinedload(Item.bin).joinedload(Bin.stack).joinedload(Stack.room),
+    ).filter(
         or_(
             Item.name.ilike(f"%{q}%"),
             Item.description.ilike(f"%{q}%"),
@@ -41,29 +50,15 @@ def search_items(
         )
     ).all()
 
-    results = []
-    for item in items:
-        # Get bin info
-        bin = db.query(Bin).filter(Bin.id == item.bin_id).first()
-
-        # Get container info if exists
-        container = None
-        if item.container_id:
-            container = db.query(Container).filter(Container.id == item.container_id).first()
-
-        # Get room info if bin has room
-        room = None
-        if bin and bin.room_id:
-            room = db.query(Room).filter(Room.id == bin.room_id).first()
-
-        results.append(SearchResult(
+    return [
+        SearchResult(
             item=item,
-            bin=bin,
-            container=container,
-            room=room
-        ))
-
-    return results
+            bin=item.bin,
+            stack=item.bin.stack if item.bin else None,
+            room=item.bin.stack.room if item.bin and item.bin.stack else None
+        )
+        for item in items
+    ]
 
 @router.get("/{item_id}", response_model=ItemSchema)
 def get_item(item_id: int, db: Session = Depends(get_db)):

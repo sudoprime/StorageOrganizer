@@ -18,6 +18,8 @@ kubectl apply -f secret.yaml
 echo "💾 Creating persistent storage..."
 kubectl apply -f postgres-pv.yaml
 kubectl apply -f postgres-pvc.yaml
+kubectl apply -f uploads-pv.yaml
+kubectl apply -f uploads-pvc.yaml
 
 # Deploy PostgreSQL
 echo "🐘 Deploying PostgreSQL..."
@@ -37,6 +39,10 @@ kubectl apply -f backend-service.yaml
 echo "🎨 Deploying Frontend..."
 kubectl apply -f frontend-deployment.yaml
 kubectl apply -f frontend-service.yaml
+
+# Create Ingress
+echo "🌐 Creating Ingress..."
+kubectl apply -f ingress.yaml
 
 echo ""
 echo "✅ Deployment complete!"

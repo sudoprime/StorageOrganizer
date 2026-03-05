@@ -15,112 +15,135 @@ Moving your household into storage is chaotic. You pack dozens (or hundreds) of 
 
 StorageOrganizer uses QR codes to create a digital inventory system:
 
-1. **Generate QR labels** for each container
+1. **Generate QR labels** for each bin (auto-generated `BIN-A3F2` style IDs)
 2. **Scan the code** with your phone to add/view items
-3. **Search** across all containers to find what you need
-4. **Track locations** within your storage unit
+3. **Search** across all bins to find what you need
+4. **Track locations** by room, stack position, and level
 5. **Attach photos** for visual reference
 
-Built with a real use case: organizing a household move into a 10×10 storage unit with 100+ containers. See [BINS.md](./BINS.md) for the container system details.
+Built with a real use case: organizing a household move into a 10x10 storage unit with 100+ containers. See [BINS.md](./BINS.md) for the container system details.
+
+## Data Model
+
+```
+Room (storage unit, garage, etc.)
+  └── Stack (floor position in the room, e.g. "A3")
+        └── Bin (physical container at a level in the stack)
+              ├── Item (loose in bin)
+              └── Bin (nested sub-bin, e.g. a Plano box inside a Sterilite tote)
+                    └── Item
+```
+
+- **Room** - A physical space with dimensions (e.g. "10x10 Storage Unit")
+- **Stack** - A floor position in a room identified by a grid coordinate (e.g. "A3", "B2"). Holds a vertical column of bins.
+- **Bin** - Any physical container, from a 27-gallon Sterilite tote to a small Plano organizer box. Bins can nest inside other bins via `parent_id`. Each bin gets an auto-generated `BIN-XXXX` ID used as QR code data.
+- **Item** - An individual thing stored in a bin.
+
+### QR Code IDs
+
+Every bin gets a unique ID in the format `BIN-A3F2` (prefix + 4-character hash). This ID is:
+- Auto-generated on bin creation with collision checking
+- Stored as the QR code data (just the ID, not a URL — so it survives hosting changes)
+- Used as the lookup key in the API (`GET /api/bins/BIN-A3F2`)
+
+### Location Rules
+
+- **Top-level bins** (no parent) must be assigned to a stack with a level (1 = bottom)
+- **Child bins** (nested inside a parent) inherit their location from the parent — they don't have their own stack/level
+- Multiple bins can share the same level in a stack (e.g. two small bins side-by-side on top of one large bin)
 
 ## Features
 
 ### MVP (In Development)
 
-- [ ] QR code generation and printing
+- [x] Bin management with auto-generated QR IDs
+- [x] Nested bins (bins inside bins, arbitrary depth)
+- [x] Stack-based location tracking (room > stack position > level)
+- [x] Item inventory (add items to bins)
+- [x] Search across all items with location context
+- [x] QR code generation (base64 PNG)
+- [x] RESTful API with full CRUD
 - [ ] Mobile-friendly QR scanning (PWA with camera access)
-- [ ] Container management (create, edit, delete)
-- [ ] Item inventory (add items to containers, bulk operations)
-- [ ] Search and filtering across all items
 - [ ] Photo attachments for items
-- [ ] Location tracking (storage unit, stack position, row/column)
-- [ ] Responsive web interface
+- [ ] Responsive web interface (frontend is scaffolded, pages are stubs)
 
 ### Future Enhancements
 
+- [ ] Spatial grid view (drag-and-drop bin placement)
 - [ ] Multi-user support (family members, moving crews)
 - [ ] Packing suggestions (weight distribution, fragile items)
-- [ ] Analytics (utilization, most-accessed containers)
 - [ ] Import/export (CSV, JSON)
-- [ ] Label templates (different sizes, formats)
-- [ ] Barcode support (in addition to QR)
+- [ ] Label printing integration (Brother PT-E560BTVP)
 - [ ] Mobile app (native iOS/Android if commercial traction)
-- [ ] Multi-tenant SaaS version
 
 ## Tech Stack
 
 **Frontend:**
-- React or Vue.js (TBD)
-- PWA capabilities (offline support, installable)
-- QR scanner library (html5-qrcode or similar)
-- Responsive design (mobile-first)
+- React 18
+- PWA capabilities (planned)
+- html5-qrcode + qrcode.react (installed, not yet wired up)
 
 **Backend:**
 - FastAPI (Python)
-- PostgreSQL database
-- RESTful API
+- PostgreSQL
+- SQLAlchemy 2.x + Alembic migrations
 
 **Infrastructure:**
-- Docker for development/deployment
-- (Production hosting TBD)
+- Docker images for backend and frontend
+- Kubernetes deployment (namespace, ConfigMaps, Secrets, PV/PVC, health checks)
 
 ## Project Structure
 
 ```
 StorageOrganizer/
-├── backend/          # FastAPI application
+├── backend/              # FastAPI application
 │   ├── app/
-│   ├── models/
-│   ├── routes/
+│   │   ├── api/          # Route handlers (rooms, stacks, bins, items)
+│   │   ├── core/         # Config and database
+│   │   ├── models/       # SQLAlchemy models
+│   │   ├── schemas/      # Pydantic schemas
+│   │   └── main.py
+│   ├── scripts/          # Utility scripts (generate_hashes.py)
+│   ├── Dockerfile
 │   └── requirements.txt
-├── frontend/         # React/Vue application
+├── frontend/             # React application
 │   ├── src/
-│   ├── public/
+│   │   ├── pages/        # Page components
+│   │   ├── services/     # API service layer
+│   │   ├── App.js
+│   │   └── index.js
+│   ├── Dockerfile
 │   └── package.json
-├── docs/            # Documentation
-├── BINS.md          # Container system reference
-└── README.md        # This file
+├── kubernetes/           # Kubernetes manifests
+├── BINS.md               # Container system reference (Sterilite selection)
+├── HARDWARE.md           # Label printer and hardware decisions
+├── UI_DESIGN.md          # UI/UX design doc (spatial grid vision)
+├── MARKET_RESEARCH.md    # Commercial viability analysis
+├── SETUP.md              # Kubernetes setup and API reference
+└── README.md             # This file
 ```
 
 ## Getting Started
 
-### Prerequisites
+See [SETUP.md](./SETUP.md) for full Kubernetes deployment instructions.
 
-- Python 3.11+
-- Node.js 18+
-- PostgreSQL 15+
-- Docker (optional, recommended)
-
-### Installation
+### Quick Local Development
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/StorageOrganizer.git
-cd StorageOrganizer
-
-# Backend setup
+# Backend
 cd backend
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Frontend setup
-cd ../frontend
-npm install
-
-# Database setup
-# (Instructions coming soon)
-```
-
-### Development
-
-```bash
-# Run backend (from backend/)
 uvicorn app.main:app --reload
 
-# Run frontend (from frontend/)
-npm run dev
+# Frontend
+cd frontend
+npm install
+npm start
 ```
+
+Requires a running PostgreSQL instance. Set `DATABASE_URL` in your environment or `.env` file.
 
 ## Use Cases
 
@@ -128,13 +151,11 @@ npm run dev
 - Household moves with intermediate storage
 - Long-term storage organization
 - Garage/basement/attic inventory
-- Estate management
 
 ### Commercial
 - Moving companies (client inventory tracking)
 - Self-storage facilities (customer service)
 - Warehouse management (small-scale)
-- Estate sale organizers
 
 ## Roadmap
 
@@ -145,32 +166,14 @@ npm run dev
 
 **Phase 2: Enhanced Features**
 - Photo management
-- Advanced search
-- Location visualization
+- Spatial grid view
+- Label printing
 
 **Phase 3: Multi-User & Sharing**
 - User authentication
 - Shared inventories
 - Access controls
 
-**Phase 4: Commercial SaaS** (If validated)
-- Multi-tenant architecture
-- Subscription billing
-- White-label options
-- Mobile apps
-
-## Contributing
-
-This project is currently in early development for personal use. Contributions, ideas, and feedback are welcome!
-
 ## License
 
 (TBD - likely MIT for open source release)
-
-## Contact
-
-(Your contact information)
-
----
-
-**Note:** This is an active project under development. The tech stack and features may evolve as the project progresses. See [BINS.md](./BINS.md) for detailed information about the container system being used.

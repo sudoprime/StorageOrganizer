@@ -152,9 +152,9 @@ StorageOrganizer/
 │   ├── app/
 │   │   ├── api/            # API route handlers
 │   │   │   ├── bins.py
-│   │   │   ├── containers.py
 │   │   │   ├── items.py
-│   │   │   └── rooms.py
+│   │   │   ├── rooms.py
+│   │   │   └── stacks.py
 │   │   ├── core/           # Core configuration
 │   │   │   ├── config.py
 │   │   │   └── database.py
@@ -171,7 +171,6 @@ StorageOrganizer/
 ├── frontend/               # React frontend
 │   ├── public/
 │   ├── src/
-│   │   ├── components/    # Reusable components
 │   │   ├── pages/         # Page components
 │   │   ├── services/      # API service layer
 │   │   ├── App.js
@@ -195,7 +194,7 @@ StorageOrganizer/
 │   └── delete-all.sh
 │
 ├── Makefile               # Build and deployment commands
-├── .env                   # Environment variables (not used in K8s)
+├── .env.example           # Environment variables template
 ├── README.md              # Project overview
 ├── BINS.md               # Bin system documentation
 ├── HARDWARE.md           # Hardware recommendations
@@ -220,6 +219,33 @@ make restart-frontend  # Restart frontend pods
 make all               # Build and deploy everything
 ```
 
+## Data Model
+
+### Hierarchy
+
+```
+Room (storage unit)
+  └── Stack (floor position, e.g. "A3")
+        └── Bin (at a level in the stack, e.g. level 1 = bottom)
+              ├── Items (directly in this bin)
+              └── Bins (nested child bins, e.g. Plano box inside a tote)
+                    └── Items
+```
+
+### QR Code IDs
+
+All bins get an auto-generated ID in the format `BIN-A3F2` (prefix + 4-char hash). The ID is:
+- Generated server-side on `POST /api/bins` with collision checking
+- Used as QR code data (just the ID string, not a URL)
+- The lookup key for all bin API endpoints
+
+### Location Rules
+
+- **Top-level bins** (no `parent_id`) must have `stack_id` and `level` set
+- **Child bins** (with `parent_id`) must NOT have `stack_id` or `level` — their location is inherited from the parent bin
+- Multiple bins can share the same level in a stack (e.g. two small bins side-by-side on one large bin)
+- Level 1 = bottom of stack, higher numbers = higher in the stack
+
 ## API Endpoints
 
 ### Rooms
@@ -227,64 +253,43 @@ make all               # Build and deploy everything
 - `POST /api/rooms` - Create room
 - `GET /api/rooms/{id}` - Get room details
 - `PUT /api/rooms/{id}` - Update room
-- `DELETE /api/rooms/{id}` - Delete room
+- `DELETE /api/rooms/{id}` - Delete room (cascades to stacks)
+
+### Stacks
+- `GET /api/stacks?room_id={id}` - List stacks in a room (room_id required)
+- `POST /api/stacks` - Create stack (requires room_id and position)
+- `GET /api/stacks/{id}` - Get stack with bins (ordered by level)
+- `PUT /api/stacks/{id}` - Update stack
+- `DELETE /api/stacks/{id}` - Delete stack
 
 ### Bins
-- `GET /api/bins` - List all bins (optional: ?room_id=1)
-- `POST /api/bins` - Create bin
-- `GET /api/bins/{bin_id}` - Get bin with items
+- `GET /api/bins` - List bins (optional filters: `?stack_id=1`, `?parent_id=1`, `?top_level=true`)
+- `POST /api/bins` - Create bin (bin_id auto-generated)
+- `GET /api/bins/{bin_id}` - Get bin with items and child bins (e.g. `GET /api/bins/BIN-A3F2`)
 - `PUT /api/bins/{bin_id}` - Update bin
-- `DELETE /api/bins/{bin_id}` - Delete bin
-- `GET /api/bins/{bin_id}/qr-code` - Generate QR code image
-
-### Containers
-- `GET /api/containers` - List all containers
-- `POST /api/containers` - Create container
-- `GET /api/containers/{container_id}` - Get container with items
-- `PUT /api/containers/{container_id}` - Update container
-- `DELETE /api/containers/{container_id}` - Delete container
+- `DELETE /api/bins/{bin_id}` - Delete bin (cascades to items and child bins)
+- `GET /api/bins/{bin_id}/qr-code` - Generate QR code image (base64 PNG)
+- `GET /api/bins/{bin_id}/items` - Get items directly in this bin
 
 ### Items
-- `GET /api/items` - List all items
-- `GET /api/items/search?q={query}` - Search items
+- `GET /api/items` - List all items (optional: `?category=Electronics`)
+- `GET /api/items/search?q={query}` - Search items (returns item + bin + stack + room)
 - `POST /api/items` - Create item
 - `GET /api/items/{id}` - Get item
 - `PUT /api/items/{id}` - Update item
 - `DELETE /api/items/{id}` - Delete item
-- `GET /api/items/categories/list` - Get all categories
-
-## Data Model
-
-### Hierarchy
-```
-Room (storage unit)
-  └── Bins (main containers with QR codes)
-        ├── Items (loose in bin)
-        └── Containers (sub-containers with QR codes)
-              └── Items (in sub-container)
-```
-
-### QR Code IDs
-- **Bins:** 4-character hashes (e.g., A3F2, B7K9)
-- **Containers:** 5-character hashes (e.g., X4K2P, Y7M3Q)
+- `GET /api/items/categories/list` - Get all unique categories
 
 ## Generating Hash IDs
 
-Use the included Python script to generate random hash IDs:
+The API auto-generates `BIN-XXXX` IDs when you create bins. You don't need to pre-generate them.
 
-```bash
-# Get backend pod
-BACKEND_POD=$(kubectl get pod -n storage-organizer -l app=backend -o jsonpath='{.items[0].metadata.name}')
+If you want to preview what IDs look like, or pre-generate a batch for planning:
 
-# Generate IDs
-kubectl exec -n storage-organizer $BACKEND_POD -- \
-  python scripts/generate_hashes.py --bins 102 --containers 50
-```
-
-Or run locally:
 ```bash
 cd backend
-python scripts/generate_hashes.py --bins 102 --containers 50 --output ids.txt
+python scripts/generate_hashes.py --count 102
+python scripts/generate_hashes.py --count 200 --output ids.txt
 ```
 
 ## Troubleshooting
@@ -371,15 +376,15 @@ Create an Ingress resource to expose services with a domain name.
    make status
    ```
 
-2. **Generate hash IDs** for your bins and containers
+2. **Create a room** for your storage unit via API
 
-3. **Print QR labels** using PT-E560BTVP
+3. **Create stacks** for each floor position in the room
 
-4. **Create a room** for your storage unit via API
+4. **Create bins** (IDs auto-generated, assign to stack + level)
 
-5. **Create bins** with generated IDs
+5. **Add items** to bins
 
-6. **Start packing** and adding items via the web app
+6. **Print QR labels** using PT-E560BTVP
 
 7. **Scan QR codes** to quickly access bin contents
 
