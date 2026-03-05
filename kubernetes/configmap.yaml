@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storage-organizer-config
+  namespace: storage-organizer
+data:
+  # Database
+  POSTGRES_DB: storage_organizer
+  POSTGRES_USER: storage_user
+
+  # Backend
+  ENVIRONMENT: development
+
+  # Frontend
+  REACT_APP_API_URL: http://localhost:8000

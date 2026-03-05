@@ -1,64 +1,176 @@
-Storage System Decision Document
-For seeding follow-up conversations on QR inventory system and organization
+# StorageOrganizer
 
-Context
-Planning a household move with an intermediate storage phase. Currently have a 10×10 storage unit, expected to upgrade to a 10×20 in ~6 months if the move proceeds. The goal was to design a modular, labeled container system that could scale with the move and support a QR code–based inventory system.
-Original reference point: ~48 × 27-gallon Sterilite totes (~1,296 gallons total capacity). The goal was to replace this with a more organized, modular system.
+A QR code-based inventory management system for tracking items in storage containers. Designed for household moves, long-term storage, and warehouse organization.
 
-Container System Research Summary
-Why Not Euro-Standard (SSI Schaefer, Georg UTZ RAKO)
-The initial research direction was Euro-standard containers (EN 13382 / DIN 55510), where two 400×300mm containers fit exactly side-by-side in a 600×400mm footprint. True interlocking modular system used in industrial warehousing.
-Rejected on price. SSI Schaefer EF-series: $24–80/unit plus lids, ~$3,500 for 51 containers — 10–12× the consumer alternative. US availability limited (Global Industrial, Zoro, SSI Schaefer direct 704-944-4500). Georg UTZ RAKO (Edinburgh, Indiana) also evaluated — no retail lid channel in US, quote-based only.
-Why Not Akro-Mils NST Series
-Made in USA, FDA-compliant HDPE, clip-on label holders (model 35010) for QR codes. Two footprint families evaluated. Rejected on current pricing ($30–58/unit) — tariff/resin inflation has narrowed the gap to Euro containers to the point where the value proposition over Sterilite is insufficient.
+## The Problem
 
-Selected System: Sterilite Modular Stacker Series
-Why Sterilite Won
+Moving your household into storage is chaotic. You pack dozens (or hundreds) of containers, stack them in a storage unit, and then can't find anything when you need it. Traditional labeling methods break down at scale:
 
-Price: ~$7–8/unit in 6-packs at Walmart
-Brand stability: Family-owned since 1939, largest plastic housewares company in North America, 7 domestic plants, not publicly traded
-Domestic manufacturing: Less tariff exposure than import-dependent competitors
-Latching lids: Robust gray latches with zip-tie/tie-down keyhole slots
-Deep recessed lids: Positively locates containers when stacking
-Height-based modularity: Shared lids across multiple heights within each footprint family
+- **Handwritten labels** are time-consuming and hard to search
+- **Spreadsheets** get out of sync with reality
+- **Memory** fails when you have 100+ identical-looking bins
+- **"I think it's in that stack somewhere"** becomes your most common phrase
 
-The Two Footprint Families
-Small footprint — 18" × 12⅝"
-ModelSKUSizeHeight1482148290064 Gal7⅛"1483148390067.5 Gal13¼"Same lid on both
-Large footprint — 25¾" × 18⅜"
-ModelSKUSizeHeight14841484900610 Gal7¼"14861486900619 Gal13¼"14881488900427 Gal19⅜"14891489900350 Gal17⅞"Same lid on 10/19/27 Gal
-Clear cross-compatibility (Stacker Clears): Clear versions share lids with opaque — 7.5 Gal ↔ 30 Qt; 10 Gal ↔ 40 Qt; 19 Gal ↔ 76 Qt; 27 Gal ↔ 108 Qt.
-Cross-Footprint Stacking (Unconfirmed — Worth Testing)
-Two small bins end-to-end: 25¼" L × 18" W vs large lid recess 25¾" × 18⅜" — only ½" and ⅜" gap respectively. Sterilite doesn't document this officially. Test with one large + two small before relying on it.
+## The Solution
 
-Storage Unit Layout
-10×10 Unit (Current)
+StorageOrganizer uses QR codes to create a digital inventory system:
 
-Large footprint grid: 4 columns × 6 rows = 24 floor positions
-With walking path (3×5 effective): 15 usable floor positions
-Stacking: 5 high for loaded electronics (~125 lbs on bottom bin — within real-world range); 6 high for lighter loads
-Do NOT stack 10 high for loaded bins — load on bottom container, not height, is the limiting factor
-Heaviest bins always on bottom; lightest at top of column
-15 positions × 5–6 high = 75–90 slots, accommodates 84-bin purchase at safe heights
+1. **Generate QR labels** for each container
+2. **Scan the code** with your phone to add/view items
+3. **Search** across all containers to find what you need
+4. **Track locations** within your storage unit
+5. **Attach photos** for visual reference
 
-10×20 Unit (Expected ~6 Months)
-Doubles to 48 floor positions / 30 usable with walking path. Same system, same SKUs. Plan to double container count. Consider buying ahead now at current sale pricing given Walmart return window backstop.
+Built with a real use case: organizing a household move into a 10×10 storage unit with 100+ containers. See [BINS.md](./BINS.md) for the container system details.
 
-Initial Purchase (~$949 total)
-SizeModelPacksUnitsVolumeCost10 Gal1484848480 gal~$37619 Gal1486636684 gal~$4387.5 Gal1483318135 gal~$135Total171021,299 gal~$949
-Nearly exactly matches original 1,296 gallon target.
-Still watching for: 27 Gal (1488) ~12 units; 4 Gal (1482) ~6 units (optional).
+## Features
 
-Container Use Philosophy
-Household skews heavily toward dense electronics and hobby parts — FPV/drone gear, 3D printer components, PCBs, cables, soldering supplies, test equipment. A 19 Gal of electronics = 50–60 lbs (unsafe). A 10 Gal of electronics = 25–30 lbs (safe solo lift). The 10 Gal also enforces more categorical packing — a feature for QR inventory.
-ContainerPrimary Use10 GalDense electronics, drone/FPV, PCBs, cables, 3D printer parts, tools19 GalKitchen, books (mixed), clothing, media, misc household7.5 GalSmall components, connectors, fasteners — things that get lost in a 10 Gal27 GalBulky light items: comforters, lamps, large soft goods
+### MVP (In Development)
 
-Next Steps
+- [ ] QR code generation and printing
+- [ ] Mobile-friendly QR scanning (PWA with camera access)
+- [ ] Container management (create, edit, delete)
+- [ ] Item inventory (add items to containers, bulk operations)
+- [ ] Search and filtering across all items
+- [ ] Photo attachments for items
+- [ ] Location tracking (storage unit, stack position, row/column)
+- [ ] Responsive web interface
 
-Verify cross-footprint stacking — one large + two small, physical fit test
-Source 27 Gal (1488) — out of stock at Walmart; check Target, Menards, Home Depot, Lowe's
-Build QR inventory system — 102 containers initial scope, design for ~200 at 10×20 scale
-Label/QR approach TBD — flat lid surfaces suit adhesive labels; keyhole slots can accept cable-tie mounted holders
+### Future Enhancements
 
+- [ ] Multi-user support (family members, moving crews)
+- [ ] Packing suggestions (weight distribution, fragile items)
+- [ ] Analytics (utilization, most-accessed containers)
+- [ ] Import/export (CSV, JSON)
+- [ ] Label templates (different sizes, formats)
+- [ ] Barcode support (in addition to QR)
+- [ ] Mobile app (native iOS/Android if commercial traction)
+- [ ] Multi-tenant SaaS version
 
-Research compared SSI Schaefer Euro-Fix, Georg UTZ RAKO, Akro-Mils NST, and Sterilite Modular Stacker before selecting Sterilite.
+## Tech Stack
+
+**Frontend:**
+- React or Vue.js (TBD)
+- PWA capabilities (offline support, installable)
+- QR scanner library (html5-qrcode or similar)
+- Responsive design (mobile-first)
+
+**Backend:**
+- FastAPI (Python)
+- PostgreSQL database
+- RESTful API
+
+**Infrastructure:**
+- Docker for development/deployment
+- (Production hosting TBD)
+
+## Project Structure
+
+```
+StorageOrganizer/
+├── backend/          # FastAPI application
+│   ├── app/
+│   ├── models/
+│   ├── routes/
+│   └── requirements.txt
+├── frontend/         # React/Vue application
+│   ├── src/
+│   ├── public/
+│   └── package.json
+├── docs/            # Documentation
+├── BINS.md          # Container system reference
+└── README.md        # This file
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL 15+
+- Docker (optional, recommended)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/StorageOrganizer.git
+cd StorageOrganizer
+
+# Backend setup
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# Frontend setup
+cd ../frontend
+npm install
+
+# Database setup
+# (Instructions coming soon)
+```
+
+### Development
+
+```bash
+# Run backend (from backend/)
+uvicorn app.main:app --reload
+
+# Run frontend (from frontend/)
+npm run dev
+```
+
+## Use Cases
+
+### Personal
+- Household moves with intermediate storage
+- Long-term storage organization
+- Garage/basement/attic inventory
+- Estate management
+
+### Commercial
+- Moving companies (client inventory tracking)
+- Self-storage facilities (customer service)
+- Warehouse management (small-scale)
+- Estate sale organizers
+
+## Roadmap
+
+**Phase 1: MVP for Personal Use** (Current)
+- Core inventory features
+- QR scanning
+- Single-user deployment
+
+**Phase 2: Enhanced Features**
+- Photo management
+- Advanced search
+- Location visualization
+
+**Phase 3: Multi-User & Sharing**
+- User authentication
+- Shared inventories
+- Access controls
+
+**Phase 4: Commercial SaaS** (If validated)
+- Multi-tenant architecture
+- Subscription billing
+- White-label options
+- Mobile apps
+
+## Contributing
+
+This project is currently in early development for personal use. Contributions, ideas, and feedback are welcome!
+
+## License
+
+(TBD - likely MIT for open source release)
+
+## Contact
+
+(Your contact information)
+
+---
+
+**Note:** This is an active project under development. The tech stack and features may evolve as the project progresses. See [BINS.md](./BINS.md) for detailed information about the container system being used.
