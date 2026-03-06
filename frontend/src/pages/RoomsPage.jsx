@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Plus, Trash2, X, ArrowRightLeft, ChevronLeft, MapPin, Package } from 'lucide-react';
 import { roomsAPI, stacksAPI, binsAPI, binTypesAPI, layoutSlotsAPI } from '../services/api';
 import { Button } from '@/components/ui/button';
@@ -11,12 +12,34 @@ import { cn } from '@/lib/utils';
 
 // ─── Constants ───────────────────────────────────────────────
 
+// Pastel pad colors for bin types — soft saturated tones on dark background
+const PAD_PALETTE = [
+  { bg: 'rgba(99,102,241,0.55)',  border: 'rgba(99,102,241,0.8)',  glow: 'rgba(99,102,241,0.25)'  },  // indigo
+  { bg: 'rgba(16,185,129,0.55)',  border: 'rgba(16,185,129,0.8)',  glow: 'rgba(16,185,129,0.25)'  },  // emerald
+  { bg: 'rgba(249,115,22,0.55)',  border: 'rgba(249,115,22,0.8)',  glow: 'rgba(249,115,22,0.25)'  },  // orange
+  { bg: 'rgba(236,72,153,0.55)',  border: 'rgba(236,72,153,0.8)',  glow: 'rgba(236,72,153,0.25)'  },  // pink
+  { bg: 'rgba(6,182,212,0.55)',   border: 'rgba(6,182,212,0.8)',   glow: 'rgba(6,182,212,0.25)'   },  // cyan
+  { bg: 'rgba(245,158,11,0.55)',  border: 'rgba(245,158,11,0.8)',  glow: 'rgba(245,158,11,0.25)'  },  // amber
+  { bg: 'rgba(139,92,246,0.55)',  border: 'rgba(139,92,246,0.8)',  glow: 'rgba(139,92,246,0.25)'  },  // violet
+  { bg: 'rgba(34,197,94,0.55)',   border: 'rgba(34,197,94,0.8)',   glow: 'rgba(34,197,94,0.25)'   },  // green
+  { bg: 'rgba(59,130,246,0.55)',  border: 'rgba(59,130,246,0.8)',  glow: 'rgba(59,130,246,0.25)'  },  // blue
+  { bg: 'rgba(244,63,94,0.55)',   border: 'rgba(244,63,94,0.8)',   glow: 'rgba(244,63,94,0.25)'   },  // rose
+];
+
+function buildTypeColorMap(binTypes) {
+  const map = {};
+  binTypes.forEach((bt, i) => {
+    map[bt.id] = PAD_PALETTE[i % PAD_PALETTE.length];
+  });
+  return map;
+}
+
 const MM_PER_INCH = 25.4;
 const SNAP_POINTS = [0, 0.5, 1];
 const SNAP_THRESHOLD = 0.15;
 const DRAG_DEAD_ZONE = 4;
 const MIN_CELL_PX = 40;
-const LABEL_W = 24;
+const LABEL_W = 28;
 const COL_BTN_W = 40;
 const GRID_PAD = 48;
 
@@ -136,6 +159,25 @@ function computeBinHeights(stacks, typeLookup) {
   return heights;
 }
 
+function computeBinLevels(stacks) {
+  const levels = {};
+  for (const stack of stacks) {
+    const bins = stack.bins || [];
+    const binById = Object.fromEntries(bins.map(b => [b.id, b]));
+    const getLevel = (bin) => {
+      if (levels[bin.id] !== undefined) return levels[bin.id];
+      if (!bin.bottom_id || !binById[bin.bottom_id]) {
+        levels[bin.id] = 1;
+        return 1;
+      }
+      levels[bin.id] = getLevel(binById[bin.bottom_id]) + 1;
+      return levels[bin.id];
+    };
+    for (const bin of bins) getLevel(bin);
+  }
+  return levels;
+}
+
 function getMaxHeightMm(stacks, typeLookup, binHeights) {
   let max = 0;
   for (const stack of stacks) {
@@ -149,19 +191,23 @@ function getMaxHeightMm(stacks, typeLookup, binHeights) {
   return max;
 }
 
-function filterBinsByHeight(cellItems, binHeights, sliderMm, typeLookup) {
-  const filtered = {};
-  for (const [pos, entries] of Object.entries(cellItems)) {
-    const kept = entries.filter(({ item }) => {
+function classifyBinsByHeight(cellItems, binHeights, sliderMm, typeLookup) {
+  const active = new Set();
+  const below = new Set();
+  for (const entries of Object.values(cellItems)) {
+    for (const { item } of entries) {
       const base = binHeights[item.id] || 0;
       const bt = typeLookup[item.bin_type_id];
       const top = base + (bt ? bt.height_mm : 0);
-      // Show bin if the slider is within its vertical range (base inclusive, top exclusive)
-      return base <= sliderMm && top > sliderMm;
-    });
-    if (kept.length > 0) filtered[pos] = kept;
+      if (base <= sliderMm && top > sliderMm) {
+        active.add(item.id);
+      } else if (top <= sliderMm) {
+        below.add(item.id);
+      }
+      // bins above slider (base > sliderMm) are in neither set — hidden
+    }
   }
-  return filtered;
+  return { active, below };
 }
 
 // Find the topmost bin at a position (highest base + height)
@@ -175,6 +221,36 @@ function findTopmostBin(stack, typeLookup, binHeights) {
     if (top > topHeight) { topHeight = top; topBin = bin; }
   }
   return topBin;
+}
+
+// Find the topmost bin below the current slider height at a position.
+// This is the bin the user sees "underneath" the current layer — dropping
+// onto the cell places the new bin on top of it, beside any existing bins
+// already at that layer.
+function findBinBelowSlider(stack, typeLookup, binHeights, sliderMm) {
+  let best = null;
+  let bestTop = -1;
+  for (const bin of (stack.bins || [])) {
+    const base = binHeights[bin.id] || 0;
+    const bt = typeLookup[bin.bin_type_id];
+    const top = base + (bt ? bt.height_mm : 0);
+    // Must be entirely below the slider level
+    if (top <= sliderMm && top > bestTop) {
+      bestTop = top;
+      best = bin;
+    }
+  }
+  // If slider is at 0, find the tallest floor-level bin
+  if (!best && sliderMm === 0) {
+    let bestHeight = -1;
+    for (const bin of (stack.bins || [])) {
+      if (bin.bottom_id) continue;
+      const bt = typeLookup[bin.bin_type_id];
+      const h = bt ? bt.height_mm : 0;
+      if (h > bestHeight) { bestHeight = h; best = bin; }
+    }
+  }
+  return best;
 }
 
 // ─── Snap drag hook ──────────────────────────────────────────
@@ -328,40 +404,31 @@ function RoomList({ rooms, onSelect, onCreate, onDelete }) {
 // ─── Grid Renderer (shared between Layout and Inventory) ─────
 
 function FloorGrid({
-  rows, cols, layout, typeLookup, cellPx,
+  rows, cols, layout, typeLookup, typeColorMap, cellPx,
   onCellClick, onMouseDown,
   showEmpty = true, showAddButtons = false,
   addRow, addCol,
   onDragOver, onDropOnCell, onDropOnBin,
-  ghostItems, binHeights,
+  ghostItems, binHeights, binLevels, activeBinIds, belowBinIds,
 }) {
   const colPx = layout.colWidths.map(w => w * cellPx);
   const rowPx = layout.rowHeights.map(h => h * cellPx);
-  const gridTemplateCols = `${LABEL_W}px ${colPx.map(w => `${w}px`).join(' ')}`;
+  const gridTemplateCols = colPx.map(w => `${w}px`).join(' ');
   const unit = layout.unit;
+
+  // Compute max isometric lift so we can pad the grid to prevent overlap with headers
+  const maxLevel = binLevels ? Math.max(1, ...Object.values(binLevels)) : 1;
+  const maxLiftPx = (maxLevel - 1) * 18;
 
   return (
     <>
-      {/* Column headers */}
-      <div className="grid gap-2 mb-2" style={{ gridTemplateColumns: gridTemplateCols }}>
-        <div />
-        {Array.from({ length: cols }, (_, i) => (
-          <div key={i} className="text-center text-xs font-mono text-slate-500">
-            {i + 1}
-          </div>
-        ))}
-      </div>
-
       {/* Grid rows */}
-      <div className="space-y-2">
+      <div className="space-y-2" style={{ paddingTop: maxLiftPx, paddingLeft: maxLiftPx }}>
         {Array.from({ length: rows }, (_, r) => {
           const rowLabel = String.fromCharCode(65 + r);
           const rh = rowPx[r];
           return (
             <div key={r} className="grid gap-2" style={{ gridTemplateColumns: gridTemplateCols }}>
-              <div className="flex items-center justify-center text-xs font-mono text-slate-500" style={{ height: rh }}>
-                {rowLabel}
-              </div>
               {Array.from({ length: cols }, (_, c) => {
                 const pos = `${rowLabel}${c + 1}`;
                 const cw = colPx[c];
@@ -378,7 +445,8 @@ function FloorGrid({
                     key={pos}
                     className={cn(
                       "relative cursor-pointer",
-                      !hasContent && showEmpty && "rounded-md border-2 border-slate-700/50 bg-slate-800/40",
+                      !hasContent && showEmpty && "rounded-md border border-neutral-800 bg-neutral-900/60",
+                      hasContent && "rounded-md",
                     )}
                     style={{ width: cw, height: rh }}
                     onClick={() => onCellClick?.(pos)}
@@ -387,7 +455,7 @@ function FloorGrid({
                     onDrop={onDropOnCell ? (e) => { e.preventDefault(); e.currentTarget.classList.remove('ring-2', 'ring-primary', 'ring-inset'); onDropOnCell(e, pos); } : undefined}
                   >
                     {!hasContent && showEmpty && (
-                      <span className="absolute top-0.5 left-1 text-[9px] font-mono text-slate-600 z-10 pointer-events-none">
+                      <span className="absolute top-0.5 left-1 text-[9px] font-mono text-neutral-600 z-10 pointer-events-none">
                         {pos}
                       </span>
                     )}
@@ -404,19 +472,25 @@ function FloorGrid({
                       const top = Math.max(0, availH) * oy;
                       const bt = typeLookup[slot.bin_type_id];
 
+                      const gtc = typeColorMap?.[slot.bin_type_id];
+
                       return (
                         <div
                           key={`ghost-${slot.id}`}
-                          className="absolute rounded border-2 border-dashed border-slate-600/50 flex items-center justify-center pointer-events-none z-10"
+                          className="absolute rounded border-2 border-dashed overflow-hidden pointer-events-none z-10"
                           style={{
                             width: Math.min(slotW, cw) - 2,
                             height: Math.min(slotH, rh) - 2,
                             left,
                             top,
+                            borderColor: gtc ? gtc.border.replace('0.8', '0.3') : 'rgba(115,115,115,0.3)',
                           }}
                         >
-                          <span className="text-[9px] text-slate-600 font-medium truncate px-1">
-                            <span className="opacity-60">{pos}</span> {bt?.name || '?'}
+                          <span className="absolute top-0.5 left-1 text-[10px] font-mono text-neutral-500">
+                            {pos}
+                          </span>
+                          <span className="absolute bottom-0.5 left-1 text-[10px] text-neutral-500 truncate max-w-[80%]">
+                            {bt?.name || '?'}
                           </span>
                         </div>
                       );
@@ -438,45 +512,102 @@ function FloorGrid({
                       const heightMm = binHeights?.[item.id] || 0;
                       const zIndex = 20 + Math.round(heightMm / 10);
 
+                      const tc = typeColorMap?.[item.bin_type_id];
+                      const level = binLevels?.[item.id] || 1;
+                      const isActive = !activeBinIds || activeBinIds.has(item.id);
+                      const isBelow = belowBinIds?.has(item.id);
+                      // Hide bins above the current slider level
+                      if (!isActive && !isBelow && activeBinIds) return null;
+                      const liftPx = (level - 1) * 18;
+
+                      // Active: full color + glow + depth shadow
+                      // Inactive: grayed out, no glow, sits behind
+                      const activeBg = tc ? tc.bg : 'rgba(115,115,115,0.55)';
+                      const activeBorder = tc ? tc.border : 'rgba(163,163,163,0.6)';
+                      const inactiveBg = 'rgba(60,60,60,0.4)';
+                      const inactiveBorder = 'rgba(80,80,80,0.5)';
+
+                      const glowStr = isActive && tc ? `0 0 12px ${tc.glow}` : '';
+
                       return (
                         <div
                           key={dragId}
                           id={`drag-${dragId}`}
-                          className="absolute rounded border border-slate-400 bg-slate-600 flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
+                          className={cn(
+                            "absolute rounded select-none",
+                            isActive ? "cursor-grab active:cursor-grabbing" : "pointer-events-none",
+                          )}
                           style={{
                             width: Math.min(itemW, cw) - 2,
                             height: Math.min(itemH, rh) - 2,
-                            left,
-                            top,
-                            zIndex,
+                            left: left - liftPx,
+                            top: top - liftPx,
+                            zIndex: isActive ? zIndex : level,
+                            background: isActive ? activeBg : inactiveBg,
+                            border: `1.5px solid ${isActive ? activeBorder : inactiveBorder}`,
+                            boxShadow: glowStr || 'none',
+                            opacity: isActive ? 1 : 0.45,
                           }}
-                          onMouseDown={onMouseDown ? (e) => {
+                          onMouseDown={isActive && onMouseDown ? (e) => {
                             const container = e.currentTarget.parentElement.getBoundingClientRect();
                             onMouseDown(e, item, container, Math.min(itemW, cw) - 2, Math.min(itemH, rh) - 2);
                           } : undefined}
-                          onDragOver={onDropOnBin ? (e) => {
+                          onDragOver={isActive && onDropOnBin ? (e) => {
                             e.preventDefault();
                             e.stopPropagation();
                             e.currentTarget.classList.add('ring-2', 'ring-amber-400', 'ring-inset');
                           } : undefined}
-                          onDragLeave={onDropOnBin ? (e) => {
+                          onDragLeave={isActive && onDropOnBin ? (e) => {
                             e.currentTarget.classList.remove('ring-2', 'ring-amber-400', 'ring-inset');
                           } : undefined}
-                          onDrop={onDropOnBin ? (e) => {
+                          onDrop={isActive && onDropOnBin ? (e) => {
                             e.preventDefault();
                             e.stopPropagation();
                             e.currentTarget.classList.remove('ring-2', 'ring-amber-400', 'ring-inset');
-                            // Also clean up parent cell highlight
                             e.currentTarget.parentElement.classList.remove('ring-2', 'ring-primary', 'ring-inset');
                             onDropOnBin(e, item);
                           } : undefined}
                         >
-                          <span className="text-[9px] text-white/80 font-medium truncate px-1 pointer-events-none">
-                            <span className="opacity-60">{pos}</span>{' '}
-                            {item.bin_id
-                              ? <>{item.name} <span className="opacity-50">{bt?.name} · {item.bin_id}</span></>
-                              : (bt?.name || '?')}
-                          </span>
+                          {/* Center: bin_id (large) */}
+                          {isActive && item.bin_id && (
+                            <span className="absolute inset-0 flex items-center justify-center text-[15px] font-mono font-bold pointer-events-none"
+                              style={{ color: 'rgba(255,255,255,0.8)' }}
+                            >
+                              {item.bin_id}
+                            </span>
+                          )}
+                          {/* Top-left: grid position */}
+                          {isActive && (
+                            <span className="absolute top-0.5 left-1 text-[10px] font-mono pointer-events-none"
+                              style={{ color: 'rgba(255,255,255,0.5)' }}
+                            >
+                              {pos}
+                            </span>
+                          )}
+                          {/* Top-right: bin name */}
+                          {isActive && item.name && (
+                            <span className="absolute top-0.5 right-1 text-[10px] font-semibold pointer-events-none truncate max-w-[60%] text-right"
+                              style={{ color: 'rgba(255,255,255,0.9)' }}
+                            >
+                              {item.name}
+                            </span>
+                          )}
+                          {/* Bottom-left: type name */}
+                          {isActive && bt?.name && (
+                            <span className="absolute bottom-0.5 left-1 text-[10px] pointer-events-none truncate max-w-[60%]"
+                              style={{ color: 'rgba(255,255,255,0.6)' }}
+                            >
+                              {bt.name}
+                            </span>
+                          )}
+                          {/* Bottom-right: stack level (always visible) */}
+                          {binLevels?.[item.id] && (
+                            <span className="absolute bottom-0.5 right-1 text-[10px] font-mono pointer-events-none"
+                              style={{ color: isActive ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}
+                            >
+                              Z{binLevels[item.id]}
+                            </span>
+                          )}
                         </div>
                       );
                     })}
@@ -489,11 +620,10 @@ function FloorGrid({
 
         {showAddButtons && (
           <div className="grid gap-2" style={{ gridTemplateColumns: gridTemplateCols }}>
-            <div />
             <button
               onClick={addRow}
-              className="rounded-md border-2 border-dashed border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-400 transition-colors h-8 flex items-center justify-center text-xs font-medium"
-              style={{ gridColumn: `2 / ${cols + 2}` }}
+              className="rounded-md border-2 border-dashed border-neutral-700 text-neutral-500 hover:border-neutral-500 hover:text-neutral-400 transition-colors h-8 flex items-center justify-center text-xs font-medium"
+              style={{ gridColumn: `1 / ${cols + 1}` }}
             >
               <Plus className="h-3 w-3 mr-1" />Row
             </button>
@@ -528,7 +658,7 @@ function HeightSlider({ maxIn, value, onChange }) {
           step={1}
           value={value}
           onChange={(e) => onChange(parseInt(e.target.value))}
-          className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-primary"
+          className="w-full h-2 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-primary"
           list="height-ticks"
         />
         <datalist id="height-ticks">
@@ -537,7 +667,7 @@ function HeightSlider({ maxIn, value, onChange }) {
       </div>
       <div className="flex justify-between px-0.5">
         {ticks.map(t => (
-          <span key={t} className="text-[8px] text-slate-600 font-mono">{t}</span>
+          <span key={t} className="text-[8px] text-neutral-600 font-mono">{t}</span>
         ))}
       </div>
     </div>
@@ -546,8 +676,7 @@ function HeightSlider({ maxIn, value, onChange }) {
 
 // ─── Room Grid View (with tabs) ─────────────────────────────
 
-function RoomGrid({ room, onBack, onRoomUpdate }) {
-  const [tab, setTab] = useState('layout');
+function RoomGrid({ room, tab, onTabChange, onBack, onRoomUpdate }) {
   const [stacks, setStacks] = useState([]);
   const [binTypes, setBinTypes] = useState([]);
   const [unassignedBins, setUnassignedBins] = useState([]);
@@ -598,6 +727,10 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
     () => Object.fromEntries(binTypes.map(bt => [bt.id, bt])),
     [binTypes]
   );
+  const typeColorMap = useMemo(
+    () => buildTypeColorMap(binTypes),
+    [binTypes]
+  );
   const stackMap = useMemo(
     () => Object.fromEntries(stacks.map(s => [s.position, s])),
     [stacks]
@@ -607,6 +740,10 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
   const binHeights = useMemo(
     () => computeBinHeights(stacks, typeLookup),
     [stacks, typeLookup]
+  );
+  const binLevels = useMemo(
+    () => computeBinLevels(stacks),
+    [stacks]
   );
   const maxHeightMm = useMemo(
     () => getMaxHeightMm(stacks, typeLookup, binHeights),
@@ -626,16 +763,25 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
     [rows, cols, stackMap, typeLookup]
   );
 
-  // Filter inventory bins by height
-  const filteredInventoryGrid = useMemo(() => {
-    const minMm = heightIn * MM_PER_INCH;
-    return {
-      ...inventoryGrid,
-      cellItems: filterBinsByHeight(inventoryGrid.cellItems, binHeights, minMm, typeLookup),
-    };
-  }, [inventoryGrid, binHeights, heightIn, typeLookup]);
+  // Compute active bin IDs for height slider + suppress ghosts when above floor
+  const sliderMm = heightIn * MM_PER_INCH;
+  const { active: activeBinIds, below: belowBinIds } = useMemo(
+    () => classifyBinsByHeight(inventoryGrid.cellItems, binHeights, sliderMm, typeLookup),
+    [inventoryGrid, binHeights, sliderMm, typeLookup]
+  );
+  const inventoryGridWithGhosts = useMemo(() => {
+    if (sliderMm > 0) return { ...inventoryGrid, ghostItems: {} };
+    // At floor level, hide ghosts for positions that have bins
+    const filtered = {};
+    for (const [pos, ghosts] of Object.entries(inventoryGrid.ghostItems || {})) {
+      if (!inventoryGrid.cellItems[pos] || inventoryGrid.cellItems[pos].length === 0) {
+        filtered[pos] = ghosts;
+      }
+    }
+    return { ...inventoryGrid, ghostItems: filtered };
+  }, [inventoryGrid, sliderMm]);
 
-  const activeLayout = tab === 'layout' ? layoutGrid : filteredInventoryGrid;
+  const activeLayout = tab === 'layout' ? layoutGrid : inventoryGridWithGhosts;
 
   const handleCellClick = (position) => {
     setSelectedPos(position);
@@ -758,6 +904,7 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
       const bin = unassignedBins.find(b => b.bin_id === binId);
       const matchingSlot = bin ? slots.find(s => s.bin_type_id === bin.bin_type_id) : null;
 
+      // Cell drop = floor level (side by side). Use handleDropOnBin for stacking.
       const updateData = { stack_id: stackId, bottom_id: null };
       if (matchingSlot) {
         updateData.orientation = matchingSlot.orientation;
@@ -774,13 +921,54 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
     const binId = e.dataTransfer.getData('text/bin-id');
     if (!binId || binId === targetBin.bin_id) return;
     try {
-      await binsAPI.update(binId, {
-        stack_id: targetBin.stack_id,
-        bottom_id: targetBin.id,
-        orientation: targetBin.orientation,
-        offset_x: targetBin.offset_x,
-        offset_y: targetBin.offset_y,
-      });
+      // Find existing siblings (other bins already on top of the same target)
+      const stack = stacks.find(s => s.id === targetBin.stack_id);
+      const siblings = (stack?.bins || []).filter(b => b.bottom_id === targetBin.id && b.bin_id !== binId);
+
+      // Orient perpendicular to target bin
+      const orientation = targetBin.orientation === 'updown' ? 'leftright' : 'updown';
+
+      const totalAtLevel = siblings.length + 1;
+      if (totalAtLevel >= 2) {
+        const targetBt = typeLookup[targetBin.bin_type_id];
+        const parentW = targetBt ? targetBt.width_mm : 1;
+        const parentD = targetBt ? targetBt.depth_mm : 1;
+        const spreadX = targetBin.orientation === 'updown' ? parentW >= parentD : parentD >= parentW;
+
+        // Cluster bins near center with small gaps (step=0.12 per bin)
+        const step = 0.12;
+        const start = 0.5 - step * (totalAtLevel - 1) / 2;
+        const offsets = Array.from({ length: totalAtLevel }, (_, i) =>
+          Math.min(1, Math.max(0, start + step * i))
+        );
+
+        // Reposition existing siblings
+        const updates = siblings.map((sib, i) => {
+          const data = {
+            orientation,
+            ...(spreadX ? { offset_x: offsets[i] } : { offset_y: offsets[i] }),
+          };
+          return binsAPI.update(sib.bin_id, data);
+        });
+        await Promise.all(updates);
+
+        // New bin gets the last offset
+        const newOffset = offsets[totalAtLevel - 1];
+        await binsAPI.update(binId, {
+          stack_id: targetBin.stack_id,
+          bottom_id: targetBin.id,
+          orientation,
+          ...(spreadX ? { offset_x: newOffset, offset_y: 0.5 } : { offset_x: 0.5, offset_y: newOffset }),
+        });
+      } else {
+        await binsAPI.update(binId, {
+          stack_id: targetBin.stack_id,
+          bottom_id: targetBin.id,
+          orientation,
+          offset_x: 0.5,
+          offset_y: 0.5,
+        });
+      }
       fetchData();
     } catch { setError('Failed to stack bin'); }
   };
@@ -793,7 +981,7 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
   const rowBtnH = tab === 'layout' ? 40 : 0;
   const colHeaderH = 24;
   const colBtnW = tab === 'layout' ? COL_BTN_W : 0;
-  const availW = containerSize.w - GRID_PAD - LABEL_W - colBtnW - hGaps;
+  const availW = containerSize.w - GRID_PAD - colBtnW - hGaps;
   const availH = containerSize.h - GRID_PAD - colHeaderH - vGaps - rowBtnH;
   const cellFromW = containerSize.w > 0 ? availW / totalNormW : 64;
   const cellFromH = containerSize.h > 0 ? availH / totalNormH : 64;
@@ -825,7 +1013,7 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
         ].map(({ key, label, icon: Icon }) => (
           <button
             key={key}
-            onClick={() => setTab(key)}
+            onClick={() => onTabChange(key)}
             className={cn(
               "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px",
               tab === key
@@ -856,6 +1044,7 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
             <div className="flex flex-wrap gap-2">
               {unassignedBins.map((bin) => {
                 const bt = typeLookup[bin.bin_type_id];
+                const tc = typeColorMap[bin.bin_type_id];
                 return (
                   <div
                     key={bin.bin_id}
@@ -864,12 +1053,16 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
                       e.dataTransfer.setData('text/bin-id', bin.bin_id);
                       e.dataTransfer.effectAllowed = 'move';
                     }}
-                    className="flex items-center gap-2 px-3 py-2 rounded-md bg-slate-800 border border-slate-700 cursor-grab active:cursor-grabbing select-none hover:border-slate-500 transition-colors"
+                    className="flex items-center gap-2 px-3 py-2 rounded-md cursor-grab active:cursor-grabbing select-none transition-colors"
+                    style={{
+                      background: tc ? tc.bg.replace('0.55', '0.25') : 'rgba(38,38,38,1)',
+                      border: `1px solid ${tc ? tc.border.replace('0.8', '0.4') : 'rgba(64,64,64,1)'}`,
+                    }}
                   >
-                    <Package className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                    <Package className="h-3.5 w-3.5 shrink-0" style={{ color: tc ? tc.border : '#a3a3a3' }} />
                     <div className="min-w-0">
                       <div className="text-xs font-medium text-white/90 truncate">{bt?.name || bin.name}</div>
-                      <div className="text-[10px] text-slate-500 font-mono">{bin.bin_id}</div>
+                      <div className="text-[10px] text-neutral-500 font-mono">{bin.bin_id}</div>
                     </div>
                   </div>
                 );
@@ -890,7 +1083,7 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
       <div
         ref={containerRef}
         className={cn(
-          "bg-slate-900 rounded-xl p-4 sm:p-6 border border-slate-800 overflow-x-auto",
+          "bg-neutral-950 rounded-xl p-4 sm:p-6 border border-neutral-800 overflow-x-auto",
           tab === 'layout' ? "flex gap-2" : "block"
         )}
       >
@@ -902,6 +1095,7 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
                 cols={cols}
                 layout={layoutGrid}
                 typeLookup={typeLookup}
+                typeColorMap={typeColorMap}
                 cellPx={cellPx}
                 onCellClick={handleCellClick}
                 onMouseDown={onSlotMouseDown}
@@ -911,10 +1105,10 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
                 addCol={addCol}
               />
             </div>
-            <div className="flex items-center" style={{ paddingTop: 20 }}>
+            <div className="flex items-center">
               <button
                 onClick={addCol}
-                className="rounded-md border-2 border-dashed border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-400 transition-colors w-8 flex flex-col items-center justify-center text-xs font-medium py-3"
+                className="rounded-md border-2 border-dashed border-neutral-700 text-neutral-500 hover:border-neutral-500 hover:text-neutral-400 transition-colors w-8 flex flex-col items-center justify-center text-xs font-medium py-3"
                 style={{ height: rowPx.reduce((a, b) => a + b, 0) + (rows - 1) * 8 }}
               >
                 <Plus className="h-3 w-3 mb-1" />
@@ -926,8 +1120,9 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
           <FloorGrid
             rows={rows}
             cols={cols}
-            layout={filteredInventoryGrid}
+            layout={inventoryGridWithGhosts}
             typeLookup={typeLookup}
+            typeColorMap={typeColorMap}
             cellPx={cellPx}
             onCellClick={handleCellClick}
             onMouseDown={onBinMouseDown}
@@ -936,8 +1131,11 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
             onDragOver
             onDropOnCell={handleDropOnCell}
             onDropOnBin={handleDropOnBin}
-            ghostItems={filteredInventoryGrid.ghostItems}
+            ghostItems={inventoryGridWithGhosts.ghostItems}
             binHeights={binHeights}
+            binLevels={binLevels}
+            activeBinIds={activeBinIds}
+            belowBinIds={belowBinIds}
           />
         )}
       </div>
@@ -1071,10 +1269,11 @@ function RoomGrid({ room, onBack, onRoomUpdate }) {
 // ─── Main Page ───────────────────────────────────────────────
 
 function RoomsPage() {
+  const { roomId, tab } = useParams();
+  const navigate = useNavigate();
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedRoom, setSelectedRoom] = useState(null);
 
   const fetchRooms = async () => {
     try {
@@ -1101,7 +1300,7 @@ function RoomsPage() {
   const handleDelete = async (id) => {
     try {
       await roomsAPI.delete(id);
-      if (selectedRoom?.id === id) setSelectedRoom(null);
+      if (selectedRoom?.id === id) navigate('/rooms');
       fetchRooms();
     } catch {
       setError('Failed to delete room');
@@ -1109,17 +1308,21 @@ function RoomsPage() {
   };
 
   const handleRoomUpdate = (updated) => {
-    setSelectedRoom(updated);
     setRooms(prev => prev.map(r => r.id === updated.id ? updated : r));
   };
 
+  const selectedRoom = roomId ? rooms.find(r => String(r.id) === roomId) : null;
+  const activeTab = tab || 'layout';
+
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
-  if (selectedRoom) {
+  if (roomId && selectedRoom) {
     return (
       <RoomGrid
         room={selectedRoom}
-        onBack={() => setSelectedRoom(null)}
+        tab={activeTab}
+        onTabChange={(t) => navigate(`/rooms/${roomId}/${t}`)}
+        onBack={() => navigate('/rooms')}
         onRoomUpdate={handleRoomUpdate}
       />
     );
@@ -1135,7 +1338,7 @@ function RoomsPage() {
       )}
       <RoomList
         rooms={rooms}
-        onSelect={setSelectedRoom}
+        onSelect={(room) => navigate(`/rooms/${room.id}/layout`)}
         onCreate={handleCreate}
         onDelete={handleDelete}
       />

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List
 
 from app.core.database import get_db
-from app.models.models import Stack
+from app.models.models import Stack, Bin
 from app.schemas.schemas import Stack as StackSchema, StackCreate, StackUpdate, StackWithBins
 
 router = APIRouter()
@@ -51,6 +51,12 @@ def delete_stack(stack_id: int, db: Session = Depends(get_db)):
     db_stack = db.query(Stack).filter(Stack.id == stack_id).first()
     if not db_stack:
         raise HTTPException(status_code=404, detail="Stack not found")
+
+    # Unassign bins so they survive the cascade delete
+    db.query(Bin).filter(Bin.stack_id == stack_id).update(
+        {Bin.stack_id: None, Bin.bottom_id: None},
+        synchronize_session="fetch"
+    )
 
     db.delete(db_stack)
     db.commit()

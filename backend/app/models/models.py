@@ -94,6 +94,9 @@ class Bin(Base):
     offset_x = Column(Float, default=0.5)  # 0=left, 0.5=center, 1=right within cell
     offset_y = Column(Float, default=0.5)  # 0=top, 0.5=center, 1=bottom within cell
 
+    # Label tracking
+    labelled = Column(Boolean, default=False)
+
     # Metadata
     weight_estimate = Column(String)  # "Light", "Medium", "Heavy"
     is_fragile = Column(Boolean, default=False)

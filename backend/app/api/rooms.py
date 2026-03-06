@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from app.core.database import get_db
-from app.models.models import Room
+from app.models.models import Room, Bin
 from app.schemas.schemas import Room as RoomSchema, RoomCreate, RoomUpdate
 
 router = APIRouter()
@@ -47,10 +47,18 @@ def update_room(room_id: int, room_update: RoomUpdate, db: Session = Depends(get
 
 @router.delete("/{room_id}", status_code=204)
 def delete_room(room_id: int, db: Session = Depends(get_db)):
-    """Delete a room"""
+    """Delete a room — unassigns bins first so they aren't cascade-deleted"""
     db_room = db.query(Room).filter(Room.id == room_id).first()
     if not db_room:
         raise HTTPException(status_code=404, detail="Room not found")
+
+    # Unassign all bins in this room's stacks so they survive the cascade delete
+    stack_ids = [s.id for s in db_room.stacks]
+    if stack_ids:
+        db.query(Bin).filter(Bin.stack_id.in_(stack_ids)).update(
+            {Bin.stack_id: None, Bin.bottom_id: None},
+            synchronize_session="fetch"
+        )
 
     db.delete(db_room)
     db.commit()

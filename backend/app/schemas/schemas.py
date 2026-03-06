@@ -151,6 +151,7 @@ class BinUpdate(BaseModel):
 class Bin(BinBase):
     id: int
     bin_id: str = Field(description="Prefixed hash ID, e.g. BIN-A3F2")
+    labelled: Optional[bool] = False
     created_at: datetime
     updated_at: Optional[datetime] = None
 

@@ -9,45 +9,74 @@ const api = axios.create({
   },
 });
 
+// Auth interceptor — attach token to requests
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// 401 interceptor — redirect to login
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      localStorage.removeItem('auth_token');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  },
+);
+
+// Auth API
+export const authAPI = {
+  login: (username, password) => api.post('/api/auth/login', { username, password }),
+};
+
 // Rooms API
 export const roomsAPI = {
-  getAll: () => api.get('/api/rooms'),
+  getAll: () => api.get('/api/rooms/'),
   getOne: (id) => api.get(`/api/rooms/${id}`),
-  create: (data) => api.post('/api/rooms', data),
+  create: (data) => api.post('/api/rooms/', data),
   update: (id, data) => api.put(`/api/rooms/${id}`, data),
   delete: (id) => api.delete(`/api/rooms/${id}`),
 };
 
 // Stacks API (floor positions in a room)
 export const stacksAPI = {
-  getAll: (roomId) => api.get('/api/stacks', { params: { room_id: roomId } }),
+  getAll: (roomId) => api.get('/api/stacks/', { params: { room_id: roomId } }),
   getOne: (id) => api.get(`/api/stacks/${id}`),
-  create: (data) => api.post('/api/stacks', data),
+  create: (data) => api.post('/api/stacks/', data),
   update: (id, data) => api.put(`/api/stacks/${id}`, data),
   delete: (id) => api.delete(`/api/stacks/${id}`),
 };
 
 // Bins API (covers both top-level bins and nested sub-bins)
 export const binsAPI = {
-  getAll: (params) => api.get('/api/bins', { params }),
-  getTopLevel: () => api.get('/api/bins', { params: { top_level: true } }),
-  getUnassigned: () => api.get('/api/bins', { params: { unassigned: true } }),
-  getByStack: (stackId) => api.get('/api/bins', { params: { stack_id: stackId } }),
-  getChildren: (parentId) => api.get('/api/bins', { params: { parent_id: parentId } }),
+  getAll: (params) => api.get('/api/bins/', { params }),
+  getTopLevel: () => api.get('/api/bins/', { params: { top_level: true } }),
+  getUnassigned: () => api.get('/api/bins/', { params: { unassigned: true } }),
+  getByStack: (stackId) => api.get('/api/bins/', { params: { stack_id: stackId } }),
+  getChildren: (parentId) => api.get('/api/bins/', { params: { parent_id: parentId } }),
   getOne: (binId) => api.get(`/api/bins/${binId}`),
-  create: (data) => api.post('/api/bins', data),
+  create: (data) => api.post('/api/bins/', data),
   update: (binId, data) => api.put(`/api/bins/${binId}`, data),
   delete: (binId) => api.delete(`/api/bins/${binId}`),
   getQRCode: (binId, size = 200) => api.get(`/api/bins/${binId}/qr-code`, { params: { size } }),
   getItems: (binId) => api.get(`/api/bins/${binId}/items`),
+  bulkCreate: (count, binTypeId) => api.post('/api/bins/bulk', null, { params: { count, bin_type_id: binTypeId } }),
+  exportCsv: (binIds) => api.post('/api/bins/export-csv', binIds, { responseType: 'blob' }),
+  markLabelled: (binIds) => api.put('/api/bins/mark-labelled', binIds),
 };
 
 // Items API
 export const itemsAPI = {
-  getAll: (params) => api.get('/api/items', { params }),
+  getAll: (params) => api.get('/api/items/', { params }),
   count: (params) => api.get('/api/items/count', { params }),
   getOne: (id) => api.get(`/api/items/${id}`),
-  create: (data) => api.post('/api/items', data),
+  create: (data) => api.post('/api/items/', data),
   update: (id, data) => api.put(`/api/items/${id}`, data),
   delete: (id) => api.delete(`/api/items/${id}`),
   search: (query) => api.get('/api/items/search', { params: { q: query } }),
@@ -56,8 +85,8 @@ export const itemsAPI = {
 
 // Images API
 export const imagesAPI = {
-  getForBin: (binId) => api.get('/api/images', { params: { bin_id: binId } }),
-  getForItem: (itemId) => api.get('/api/images', { params: { item_id: itemId } }),
+  getForBin: (binId) => api.get('/api/images/', { params: { bin_id: binId } }),
+  getForItem: (itemId) => api.get('/api/images/', { params: { item_id: itemId } }),
   upload: (file, { bin_id, item_id } = {}) => {
     const form = new FormData();
     form.append('file', file);
@@ -74,17 +103,17 @@ export const imagesAPI = {
 
 // Layout Slots API
 export const layoutSlotsAPI = {
-  getAll: (stackId) => api.get('/api/layout-slots', { params: { stack_id: stackId } }),
-  create: (data) => api.post('/api/layout-slots', data),
+  getAll: (stackId) => api.get('/api/layout-slots/', { params: { stack_id: stackId } }),
+  create: (data) => api.post('/api/layout-slots/', data),
   update: (id, data) => api.put(`/api/layout-slots/${id}`, data),
   delete: (id) => api.delete(`/api/layout-slots/${id}`),
 };
 
 // Bin Types API
 export const binTypesAPI = {
-  getAll: () => api.get('/api/bin-types'),
+  getAll: () => api.get('/api/bin-types/'),
   getOne: (id) => api.get(`/api/bin-types/${id}`),
-  create: (data) => api.post('/api/bin-types', data),
+  create: (data) => api.post('/api/bin-types/', data),
   update: (id, data) => api.put(`/api/bin-types/${id}`, data),
   delete: (id) => api.delete(`/api/bin-types/${id}`),
   uploadImage: (id, file) => {

@@ -67,10 +67,15 @@ The grid is rendered by a shared `FloorGrid` component used by both tabs. It acc
 
 ### Cell Rendering
 
-- **Empty cells (Layout only):** Light gray border/background with position label (e.g. "A1").
-- **Occupied cells:** No border/background. Each bin renders as a dark gray rectangle sized proportionally to its BinType dimensions. Label shows `{position} {binTypeName}`.
+- **Empty cells (Layout only):** Subtle dark border/background with position label (e.g. "A1").
+- **Occupied cells:** Each bin renders as a colored rectangle (color assigned per BinType from `PAD_PALETTE`) with soft glow. Four-corner label layout:
+  - Top-left: grid position (e.g. "A3")
+  - Top-right: bin name
+  - Center: bin_id (large, bold mono)
+  - Bottom-left: type name
+  - Bottom-right: Z level (e.g. "Z1")
 - **Empty cells (Inventory):** Rendered as invisible spacers to preserve grid geometry.
-- Multiple bins can occupy the same cell (same Stack). They render independently and can overlap.
+- Multiple bins can occupy the same cell (same Stack). They render independently with isometric Z offsets.
 
 ## Interaction
 
@@ -139,9 +144,19 @@ Bins can be dragged within their cell to reposition. Implemented in `useDrag()` 
 | `PUT /api/bins/{bin_id}` | Update orientation/offset/stack_id |
 | `DELETE /api/bins/{bin_id}` | Remove bin from cell |
 
+## Vertical Stack Visualization
+
+Bins stacked via `bottom_id` are rendered with depth cues:
+
+- **Isometric offset:** Each Z level shifts the bin 3px up and left. Z1 sits at true position, Z2 is offset (-3,-3), Z3 is (-6,-6), etc. This reveals a sliver of lower bins at the bottom-right edge.
+- **Drop shadows:** Shadow size and opacity scale with Z level. Z1 gets a subtle `0 1px 3px` shadow; higher bins cast larger, more diffuse shadows downward.
+- **Z-index:** Higher bins render on top (`zIndex = 20 + heightMm/10`).
+- **Z label:** Bottom-right corner shows `Z1`, `Z2`, etc. from `computeBinLevels()` which traverses the `bottom_id` linked list.
+- **Height slider:** Filters bins by vertical cross-section. Ghost outlines (layout slot guides) are hidden when the slider is above floor level.
+
 ## Future Considerations
 
+- **Mini side-elevation view:** A narrow strip alongside each stack column showing a vertical cross-section (doll-house cutaway). Each bin would render as a colored rectangle at its true height, stacked vertically. Clicking a layer in the elevation would jump the height slider to that level. This would give full 3D spatial awareness without needing to scrub the slider.
 - Diagonal orientation support (mentioned as eventual possibility)
 - Row/column deletion
-- Bin vertical stacking visualization (bottom_id linked list exists but isn't rendered)
 - Touch/mobile drag support (currently mouse-only)

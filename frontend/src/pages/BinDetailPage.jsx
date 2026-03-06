@@ -1,12 +1,60 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Check, X, Package, Pencil } from 'lucide-react';
-import { binsAPI, itemsAPI, binTypesAPI } from '../services/api';
+import { ArrowLeft, Plus, Trash2, Check, X, Package, Pencil, Upload, Image as ImageIcon } from 'lucide-react';
+import { binsAPI, itemsAPI, binTypesAPI, imagesAPI } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+
+function ImageGallery({ images, onUpload, onDelete, uploading }) {
+  const fileRef = useRef(null);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {images.map((img) => (
+          <div key={img.id} className="relative group w-24 h-24 rounded-md overflow-hidden border bg-muted">
+            <img src={img.url} alt={img.filename} className="w-full h-full object-cover" />
+            <button
+              onClick={() => onDelete(img.id)}
+              className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          className="w-24 h-24 rounded-md border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center text-muted-foreground/50 hover:border-muted-foreground/60 hover:text-muted-foreground/80 transition-colors"
+        >
+          {uploading ? (
+            <span className="text-xs">...</span>
+          ) : (
+            <>
+              <Upload className="h-5 w-5 mb-1" />
+              <span className="text-xs">Upload</span>
+            </>
+          )}
+        </button>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files?.[0]) {
+            onUpload(e.target.files[0]);
+            e.target.value = '';
+          }
+        }}
+      />
+    </div>
+  );
+}
 
 function BinDetailPage() {
   const { binId } = useParams();
@@ -22,6 +70,11 @@ function BinDetailPage() {
   const [editingBin, setEditingBin] = useState(false);
   const [binDraft, setBinDraft] = useState({ name: '', bin_id: '', notes: '', bin_type_id: '' });
   const nameRef = useRef(null);
+
+  const [binImages, setBinImages] = useState([]);
+  const [itemImages, setItemImages] = useState({});
+  const [uploadingBin, setUploadingBin] = useState(false);
+  const [uploadingItem, setUploadingItem] = useState(null);
 
   const emptyRow = { name: '', quantity: 1, category: '', description: '' };
   const [draft, setDraft] = useState(emptyRow);
@@ -44,11 +97,66 @@ function BinDetailPage() {
     }
   };
 
+  const fetchBinImages = async (dbBinId) => {
+    try {
+      const res = await imagesAPI.getForBin(dbBinId);
+      setBinImages(res.data);
+    } catch { /* ignore */ }
+  };
+
+  const fetchItemImages = async (itemId) => {
+    try {
+      const res = await imagesAPI.getForItem(itemId);
+      setItemImages(prev => ({ ...prev, [itemId]: res.data }));
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => { fetchBin(); }, [binId]);
+
+  useEffect(() => {
+    if (bin) {
+      fetchBinImages(bin.id);
+      (bin.items || []).forEach(item => fetchItemImages(item.id));
+    }
+  }, [bin?.id]);
 
   useEffect(() => {
     if (addingRow && nameRef.current) nameRef.current.focus();
   }, [addingRow]);
+
+  const handleUploadBinImage = async (file) => {
+    setUploadingBin(true);
+    try {
+      await imagesAPI.upload(file, { bin_id: bin.id });
+      await fetchBinImages(bin.id);
+    } catch {
+      setError('Failed to upload image');
+    } finally {
+      setUploadingBin(false);
+    }
+  };
+
+  const handleUploadItemImage = async (itemId, file) => {
+    setUploadingItem(itemId);
+    try {
+      await imagesAPI.upload(file, { item_id: itemId });
+      await fetchItemImages(itemId);
+    } catch {
+      setError('Failed to upload image');
+    } finally {
+      setUploadingItem(null);
+    }
+  };
+
+  const handleDeleteImage = async (imageId, binDbId, itemId) => {
+    try {
+      await imagesAPI.delete(imageId);
+      if (binDbId) await fetchBinImages(binDbId);
+      if (itemId) await fetchItemImages(itemId);
+    } catch {
+      setError('Failed to delete image');
+    }
+  };
 
   const handleStartEditBin = () => {
     setEditingBin(true);
@@ -258,6 +366,19 @@ function BinDetailPage() {
         )}
       </div>
 
+      {/* Bin Images */}
+      <div>
+        <h3 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+          <ImageIcon className="h-4 w-4" />Bin Photos
+        </h3>
+        <ImageGallery
+          images={binImages}
+          onUpload={handleUploadBinImage}
+          onDelete={(imgId) => handleDeleteImage(imgId, bin.id, null)}
+          uploading={uploadingBin}
+        />
+      </div>
+
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/20 p-4 text-destructive text-sm flex justify-between items-center">
           {error}
@@ -269,10 +390,11 @@ function BinDetailPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50">
-              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[30%]">Name</th>
-              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[10%]">Qty</th>
-              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[20%]">Category</th>
-              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[30%]">Description</th>
+              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[25%]">Name</th>
+              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[8%]">Qty</th>
+              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[15%]">Category</th>
+              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[27%]">Description</th>
+              <th className="h-10 px-4 text-left font-medium text-muted-foreground w-[15%]">Images</th>
               <th className="h-10 px-4 text-right font-medium text-muted-foreground w-[10%]"></th>
             </tr>
           </thead>
@@ -288,26 +410,16 @@ function BinDetailPage() {
                   onKeyDown={handleKeyDown}
                 />
               ) : (
-                <tr
+                <ItemRow
                   key={item.id}
-                  className="border-b last:border-0 hover:bg-muted/30 transition-colors cursor-pointer"
-                  onClick={() => handleStartEdit(item)}
-                >
-                  <td className="px-4 py-3 font-medium">{item.name}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{item.quantity}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{item.category || '—'}</td>
-                  <td className="px-4 py-3 text-muted-foreground truncate max-w-0">{item.description || '—'}</td>
-                  <td className="px-4 py-3 text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </td>
-                </tr>
+                  item={item}
+                  images={itemImages[item.id] || []}
+                  uploadingItem={uploadingItem}
+                  onStartEdit={handleStartEdit}
+                  onDelete={handleDelete}
+                  onUploadImage={handleUploadItemImage}
+                  onDeleteImage={(imgId) => handleDeleteImage(imgId, null, item.id)}
+                />
               )
             ))}
             {addingRow && (
@@ -322,7 +434,7 @@ function BinDetailPage() {
             )}
             {items.length === 0 && !addingRow && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                   <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   No items yet. Click "Add Item" to start.
                 </td>
@@ -332,6 +444,63 @@ function BinDetailPage() {
         </table>
       </div>
     </div>
+  );
+}
+
+function ItemRow({ item, images, uploadingItem, onStartEdit, onDelete, onUploadImage, onDeleteImage }) {
+  const fileRef = useRef(null);
+
+  return (
+    <tr className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+      <td className="px-4 py-3 font-medium cursor-pointer" onClick={() => onStartEdit(item)}>{item.name}</td>
+      <td className="px-4 py-3 text-muted-foreground cursor-pointer" onClick={() => onStartEdit(item)}>{item.quantity}</td>
+      <td className="px-4 py-3 text-muted-foreground cursor-pointer" onClick={() => onStartEdit(item)}>{item.category || '—'}</td>
+      <td className="px-4 py-3 text-muted-foreground truncate max-w-0 cursor-pointer" onClick={() => onStartEdit(item)}>{item.description || '—'}</td>
+      <td className="px-4 py-2">
+        <div className="flex items-center gap-1 flex-wrap">
+          {images.map((img) => (
+            <div key={img.id} className="relative group w-8 h-8 rounded overflow-hidden border bg-muted flex-shrink-0">
+              <img src={img.url} alt={img.filename} className="w-full h-full object-cover" />
+              <button
+                onClick={(e) => { e.stopPropagation(); onDeleteImage(img.id); }}
+                className="absolute top-0 right-0 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="h-2.5 w-2.5" />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+            disabled={uploadingItem === item.id}
+            className="w-8 h-8 rounded border border-dashed border-muted-foreground/30 flex items-center justify-center text-muted-foreground/40 hover:border-muted-foreground/60 hover:text-muted-foreground/80 transition-colors flex-shrink-0"
+          >
+            {uploadingItem === item.id ? <span className="text-[10px]">...</span> : <Plus className="h-3 w-3" />}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.[0]) {
+                onUploadImage(item.id, e.target.files[0]);
+                e.target.value = '';
+              }
+            }}
+          />
+        </div>
+      </td>
+      <td className="px-4 py-3 text-right">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-destructive hover:text-destructive"
+          onClick={(e) => { e.stopPropagation(); onDelete(item.id); }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </td>
+    </tr>
   );
 }
 
@@ -376,6 +545,7 @@ function EditableRow({ draft, setDraft, onSave, onCancel, onKeyDown, nameRef }) 
           className="h-8"
         />
       </td>
+      <td className="px-3 py-2"></td>
       <td className="px-3 py-2 text-right">
         <div className="flex justify-end gap-1">
           <Button variant="ghost" size="icon" className="h-8 w-8 text-green-500" onClick={onSave}>

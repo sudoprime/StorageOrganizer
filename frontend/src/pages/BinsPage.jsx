@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Pencil, Ruler, X, Check, ImagePlus, Package } from 'lucide-react';
+import { Plus, Trash2, Pencil, Ruler, X, Check, ImagePlus, Package, Tag, Download, CheckSquare } from 'lucide-react';
 import { binTypesAPI, binsAPI, stacksAPI, roomsAPI } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -306,7 +306,6 @@ function TypesTab() {
 // ─── Inventory Tab ───────────────────────────────────────────
 
 function computeStackLevel(bin, allBins) {
-  // Count how many bins are below this one via bottom_id chain
   const binById = Object.fromEntries(allBins.map(b => [b.id, b]));
   let level = 1;
   let current = bin;
@@ -325,9 +324,7 @@ function InventoryTab() {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [newBinTypeId, setNewBinTypeId] = useState('');
-  const [newBinName, setNewBinName] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
 
   const fetchData = async () => {
     try {
@@ -339,7 +336,6 @@ function InventoryTab() {
       setBins(binsRes.data);
       setBinTypes(typesRes.data);
       setRooms(roomsRes.data);
-      // Fetch stacks for all rooms
       const allStacks = [];
       for (const room of roomsRes.data) {
         const stacksRes = await stacksAPI.getAll(room.id);
@@ -355,26 +351,10 @@ function InventoryTab() {
 
   useEffect(() => { fetchData(); }, []);
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    if (!newBinTypeId) return;
-    try {
-      await binsAPI.create({
-        name: newBinName || binTypes.find(bt => bt.id === parseInt(newBinTypeId))?.name || 'Unnamed Bin',
-        bin_type_id: parseInt(newBinTypeId),
-      });
-      setDialogOpen(false);
-      setNewBinTypeId('');
-      setNewBinName('');
-      fetchData();
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to create bin');
-    }
-  };
-
   const handleDelete = async (binId) => {
     try {
       await binsAPI.delete(binId);
+      setDeleteConfirm(null);
       fetchData();
     } catch {
       setError('Failed to delete bin');
@@ -392,14 +372,11 @@ function InventoryTab() {
     return `${stack.position} - level ${level}`;
   };
 
+  // Only show bins that have a type and are labelled
+  const typedBins = bins.filter(b => b.bin_type_id && b.labelled);
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-end">
-        <Button onClick={() => setDialogOpen(true)} size="sm">
-          <Plus className="h-4 w-4 mr-1" />Add Bin
-        </Button>
-      </div>
-
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/20 p-4 text-destructive text-sm flex justify-between items-center">
           {error}
@@ -409,11 +386,11 @@ function InventoryTab() {
 
       {loading ? (
         <p className="text-muted-foreground">Loading...</p>
-      ) : bins.length === 0 ? (
+      ) : typedBins.length === 0 ? (
         <Card>
           <CardHeader>
             <CardTitle>No bins yet</CardTitle>
-            <CardDescription>Add a bin to start tracking your inventory.</CardDescription>
+            <CardDescription>Generate bins in the Labelling tab to get started.</CardDescription>
           </CardHeader>
         </Card>
       ) : (
@@ -429,7 +406,7 @@ function InventoryTab() {
               </tr>
             </thead>
             <tbody>
-              {bins.map((bin) => {
+              {typedBins.map((bin) => {
                 const bt = typeLookup[bin.bin_type_id];
                 return (
                   <tr key={bin.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => navigate(`/bins/${bin.bin_id}`)}>
@@ -446,7 +423,7 @@ function InventoryTab() {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive"
-                        onClick={(e) => { e.stopPropagation(); handleDelete(bin.bin_id); }}
+                        onClick={(e) => { e.stopPropagation(); setDeleteConfirm(bin); }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -459,37 +436,256 @@ function InventoryTab() {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
         <DialogHeader>
-          <DialogTitle>Add New Bin</DialogTitle>
+          <DialogTitle>Delete Bin</DialogTitle>
         </DialogHeader>
         <DialogContent>
-          <form id="new-bin-form" onSubmit={handleCreate} className="space-y-4">
-            <div>
-              <label className="text-sm font-medium text-foreground">Bin Type *</label>
-              <Select value={newBinTypeId} onChange={(e) => setNewBinTypeId(e.target.value)} required>
+          <p className="text-sm text-muted-foreground">
+            Are you sure you want to delete <span className="font-mono font-medium text-foreground">{deleteConfirm?.bin_id}</span>?
+            This will permanently remove the bin and all its items.
+          </p>
+        </DialogContent>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+          <Button variant="destructive" size="sm" onClick={() => handleDelete(deleteConfirm.bin_id)}>Delete</Button>
+        </DialogFooter>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Labelling Tab ──────────────────────────────────────────
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function LabellingTab() {
+  const [binTypes, setBinTypes] = useState([]);
+  const [unlabelledBins, setUnlabelledBins] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [genTypeId, setGenTypeId] = useState('');
+  const [genCount, setGenCount] = useState(10);
+  const [selected, setSelected] = useState(new Set());
+
+  const fetchData = async () => {
+    try {
+      const [binsRes, typesRes] = await Promise.all([
+        binsAPI.getAll(),
+        binTypesAPI.getAll(),
+      ]);
+      setBinTypes(typesRes.data);
+      setUnlabelledBins(
+        binsRes.data
+          .filter(b => !b.labelled)
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      );
+    } catch {
+      setError('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  const handleGenerate = async () => {
+    if (!genTypeId || genCount < 1) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const res = await binsAPI.bulkCreate(genCount, parseInt(genTypeId));
+      const newBins = res.data;
+      // Auto-download CSV for the generated batch
+      const csvRes = await binsAPI.exportCsv(newBins.map(b => b.id));
+      downloadBlob(new Blob([csvRes.data]), 'bin_labels.csv');
+      // Refresh the table
+      await fetchData();
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to generate bins');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleExportSelected = async () => {
+    if (selected.size === 0) return;
+    try {
+      const csvRes = await binsAPI.exportCsv([...selected]);
+      downloadBlob(new Blob([csvRes.data]), 'bin_labels.csv');
+    } catch {
+      setError('Failed to export CSV');
+    }
+  };
+
+  const handleMarkLabelled = async () => {
+    if (selected.size === 0) return;
+    try {
+      await binsAPI.markLabelled([...selected]);
+      setSelected(new Set());
+      await fetchData();
+    } catch {
+      setError('Failed to mark as labelled');
+    }
+  };
+
+  const toggleSelect = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selected.size === unlabelledBins.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(unlabelledBins.map(b => b.id)));
+    }
+  };
+
+  const typeLookup = Object.fromEntries(binTypes.map(bt => [bt.id, bt]));
+
+  return (
+    <div className="space-y-6">
+      {/* Generate Bins */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Generate Bins</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <label className="text-sm font-medium text-muted-foreground mb-1 block">Bin Type</label>
+              <Select value={genTypeId} onChange={(e) => setGenTypeId(e.target.value)}>
                 <option value="">Select a type...</option>
                 {binTypes.map(bt => (
                   <option key={bt.id} value={bt.id}>{bt.name}</option>
                 ))}
               </Select>
             </div>
-            <div>
-              <label className="text-sm font-medium text-foreground">Name (optional)</label>
+            <div className="w-24">
+              <label className="text-sm font-medium text-muted-foreground mb-1 block">Count</label>
               <Input
-                value={newBinName}
-                onChange={(e) => setNewBinName(e.target.value)}
-                placeholder="e.g. Kitchen Gadgets"
+                type="number"
+                min="1"
+                max="100"
+                value={genCount}
+                onChange={(e) => setGenCount(parseInt(e.target.value) || 1)}
               />
-              <p className="text-xs text-muted-foreground mt-1">Leave blank to use the bin type name</p>
             </div>
-          </form>
-        </DialogContent>
-        <DialogFooter>
-          <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(false)}>Cancel</Button>
-          <Button type="submit" size="sm" form="new-bin-form">Create</Button>
-        </DialogFooter>
-      </Dialog>
+            <Button onClick={handleGenerate} disabled={!genTypeId || generating}>
+              {generating ? 'Generating...' : 'Generate'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/20 p-4 text-destructive text-sm flex justify-between items-center">
+          {error}
+          <button onClick={() => setError(null)}><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
+      {/* Unlabelled Bins Table */}
+      {loading ? (
+        <p className="text-muted-foreground">Loading...</p>
+      ) : unlabelledBins.length === 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>All bins labelled</CardTitle>
+            <CardDescription>No unlabelled bins. Generate a batch above to get started.</CardDescription>
+          </CardHeader>
+        </Card>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              {unlabelledBins.length} unlabelled bin{unlabelledBins.length !== 1 ? 's' : ''}
+              {selected.size > 0 && <span className="ml-1 text-foreground">({selected.size} selected)</span>}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportSelected}
+                disabled={selected.size === 0}
+              >
+                <Download className="h-4 w-4 mr-1" />Download CSV
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleMarkLabelled}
+                disabled={selected.size === 0}
+              >
+                <CheckSquare className="h-4 w-4 mr-1" />Mark as Labelled
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-md border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/50">
+                  <th className="h-10 px-4 text-left w-10">
+                    <input
+                      type="checkbox"
+                      checked={selected.size === unlabelledBins.length && unlabelledBins.length > 0}
+                      onChange={toggleSelectAll}
+                      className="rounded border-input"
+                    />
+                  </th>
+                  <th className="h-10 px-4 text-left font-medium text-muted-foreground">Bin ID</th>
+                  <th className="h-10 px-4 text-left font-medium text-muted-foreground">Type</th>
+                  <th className="h-10 px-4 text-left font-medium text-muted-foreground">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unlabelledBins.map((bin) => {
+                  const bt = typeLookup[bin.bin_type_id];
+                  return (
+                    <tr
+                      key={bin.id}
+                      className={cn(
+                        "border-b last:border-0 transition-colors cursor-pointer",
+                        selected.has(bin.id) ? "bg-primary/5" : "hover:bg-muted/30"
+                      )}
+                      onClick={() => toggleSelect(bin.id)}
+                    >
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(bin.id)}
+                          onChange={() => toggleSelect(bin.id)}
+                          className="rounded border-input"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant="outline" className="font-mono">{bin.bin_id}</Badge>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{bt?.name || '—'}</td>
+                      <td className="px-4 py-3 text-muted-foreground text-xs">
+                        {new Date(bin.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -508,6 +704,7 @@ function BinsPage() {
       <div className="flex border-b border-border">
         {[
           { key: 'inventory', label: 'Inventory', icon: Package },
+          { key: 'labelling', label: 'Labelling', icon: Tag },
           { key: 'types', label: 'Types', icon: Ruler },
         ].map(({ key, label, icon: Icon }) => (
           <button
@@ -526,7 +723,7 @@ function BinsPage() {
         ))}
       </div>
 
-      {tab === 'types' ? <TypesTab /> : <InventoryTab />}
+      {tab === 'types' ? <TypesTab /> : tab === 'labelling' ? <LabellingTab /> : <InventoryTab />}
     </div>
   );
 }

@@ -1,15 +1,17 @@
+import csv
 import random
 import string
-from io import BytesIO
+from io import BytesIO, StringIO
 import base64
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import qrcode
 
 from app.core.database import get_db
-from app.models.models import Bin, Item
+from app.models.models import Bin, BinType, Item
 from app.schemas.schemas import Bin as BinSchema, BinCreate, BinUpdate, BinWithContents, Item as ItemSchema
 
 router = APIRouter()
@@ -54,6 +56,65 @@ def get_bins(
     if unassigned:
         query = query.filter(Bin.stack_id.is_(None), Bin.parent_id.is_(None))
     return query.offset(skip).limit(limit).all()
+
+@router.post("/bulk", response_model=List[BinSchema])
+def bulk_create_bins(
+    count: int = Query(..., ge=1, le=100),
+    bin_type_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Bulk create bins with a given type. Name defaults to the type name."""
+    bin_type = db.query(BinType).filter(BinType.id == bin_type_id).first()
+    if not bin_type:
+        raise HTTPException(status_code=404, detail="Bin type not found")
+
+    created = []
+    for _ in range(count):
+        bin_id = _generate_unique_bin_id(db)
+        db_bin = Bin(bin_id=bin_id, name=bin_type.name, bin_type_id=bin_type_id)
+        db.add(db_bin)
+        db.flush()
+        created.append(db_bin)
+    db.commit()
+    for b in created:
+        db.refresh(b)
+    return created
+
+
+@router.post("/export-csv")
+def export_bins_csv(
+    bin_ids: List[int],
+    db: Session = Depends(get_db),
+):
+    """Export a CSV of bin IDs for label printing."""
+    bins = db.query(Bin).filter(Bin.id.in_(bin_ids)).order_by(Bin.created_at.desc()).all()
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["bin_id"])
+    for b in bins:
+        writer.writerow([b.bin_id])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=bin_labels.csv"},
+    )
+
+
+@router.put("/mark-labelled", response_model=List[BinSchema])
+def mark_bins_labelled(
+    bin_ids: List[int],
+    db: Session = Depends(get_db),
+):
+    """Mark bins as labelled."""
+    bins = db.query(Bin).filter(Bin.id.in_(bin_ids)).all()
+    for b in bins:
+        b.labelled = True
+    db.commit()
+    for b in bins:
+        db.refresh(b)
+    return bins
+
 
 @router.get("/{bin_id}", response_model=BinWithContents)
 def get_bin(bin_id: str, db: Session = Depends(get_db)):

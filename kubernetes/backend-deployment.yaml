@@ -51,6 +51,16 @@ spec:
               key: ENVIRONMENT
         - name: UPLOADS_DIR
           value: /data/uploads
+        - name: AUTH_PASSWORD_HASH
+          valueFrom:
+            secretKeyRef:
+              name: storage-organizer-secrets
+              key: AUTH_PASSWORD_HASH
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: storage-organizer-secrets
+              key: JWT_SECRET
         volumeMounts:
         - name: uploads
           mountPath: /data/uploads

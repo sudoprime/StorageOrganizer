@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils';
 
 const PAD_COLORS = {
-  empty: { bg: 'bg-slate-800', glow: '', border: 'border-slate-700' },
+  empty: { bg: 'bg-neutral-800', glow: '', border: 'border-neutral-700' },
   blue: { bg: 'bg-blue-600', glow: 'shadow-[0_0_12px_rgba(59,130,246,0.5)]', border: 'border-blue-500' },
   green: { bg: 'bg-emerald-600', glow: 'shadow-[0_0_12px_rgba(16,185,129,0.5)]', border: 'border-emerald-500' },
   red: { bg: 'bg-red-600', glow: 'shadow-[0_0_12px_rgba(239,68,68,0.5)]', border: 'border-red-500' },
@@ -9,6 +9,7 @@ const PAD_COLORS = {
   purple: { bg: 'bg-purple-600', glow: 'shadow-[0_0_12px_rgba(147,51,234,0.5)]', border: 'border-purple-500' },
   cyan: { bg: 'bg-cyan-500', glow: 'shadow-[0_0_12px_rgba(6,182,212,0.5)]', border: 'border-cyan-400' },
   pink: { bg: 'bg-pink-500', glow: 'shadow-[0_0_12px_rgba(236,72,153,0.5)]', border: 'border-pink-400' },
+  orange: { bg: 'bg-orange-500', glow: 'shadow-[0_0_12px_rgba(249,115,22,0.5)]', border: 'border-orange-400' },
 };
 
 function Pad({ label, color = 'empty', active = false, onClick }) {
@@ -27,8 +28,8 @@ function Pad({ label, color = 'empty', active = false, onClick }) {
         isLit && colors.glow,
         isLit
           ? 'text-white/90 hover:brightness-110 active:brightness-75 active:scale-95'
-          : 'text-slate-500 hover:bg-slate-700 hover:border-slate-600 active:bg-slate-600 active:scale-95',
-        active && 'ring-2 ring-white ring-offset-2 ring-offset-slate-900',
+          : 'text-neutral-500 hover:bg-neutral-700 hover:border-neutral-600 active:bg-neutral-600 active:scale-95',
+        active && 'ring-2 ring-orange-500 ring-offset-2 ring-offset-neutral-950',
       )}
     >
       {label}
@@ -55,7 +56,7 @@ function PadGrid({ rows = 4, cols = 4, pads = [], onPadClick }) {
   }
 
   return (
-    <div className="bg-slate-900 rounded-xl p-4 sm:p-6 border border-slate-800">
+    <div className="bg-neutral-950 rounded-xl p-4 sm:p-6 border border-neutral-800">
       {/* Column labels */}
       <div
         className="grid gap-2 sm:gap-3 mb-2"
@@ -63,7 +64,7 @@ function PadGrid({ rows = 4, cols = 4, pads = [], onPadClick }) {
       >
         <div />
         {Array.from({ length: cols }, (_, i) => (
-          <div key={i} className="text-center text-xs font-mono text-slate-500">
+          <div key={i} className="text-center text-xs font-mono text-neutral-500">
             {i + 1}
           </div>
         ))}
@@ -76,7 +77,7 @@ function PadGrid({ rows = 4, cols = 4, pads = [], onPadClick }) {
       >
         {Array.from({ length: rows }, (_, r) => (
           <>
-            <div key={`label-${r}`} className="flex items-center justify-center text-xs font-mono text-slate-500">
+            <div key={`label-${r}`} className="flex items-center justify-center text-xs font-mono text-neutral-500">
               {String.fromCharCode(65 + r)}
             </div>
             {grid.slice(r * cols, (r + 1) * cols)}
