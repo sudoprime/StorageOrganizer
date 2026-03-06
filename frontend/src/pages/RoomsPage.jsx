@@ -199,7 +199,7 @@ function classifyBinsByHeight(cellItems, binHeights, sliderMm, typeLookup) {
       const base = binHeights[item.id] || 0;
       const bt = typeLookup[item.bin_type_id];
       const top = base + (bt ? bt.height_mm : 0);
-      if (base <= sliderMm && top > sliderMm) {
+      if (base <= sliderMm && top >= sliderMm) {
         active.add(item.id);
       } else if (top <= sliderMm) {
         below.add(item.id);
@@ -208,49 +208,6 @@ function classifyBinsByHeight(cellItems, binHeights, sliderMm, typeLookup) {
     }
   }
   return { active, below };
-}
-
-// Find the topmost bin at a position (highest base + height)
-function findTopmostBin(stack, typeLookup, binHeights) {
-  let topBin = null;
-  let topHeight = -1;
-  for (const bin of (stack.bins || [])) {
-    const base = binHeights[bin.id] || 0;
-    const bt = typeLookup[bin.bin_type_id];
-    const top = base + (bt ? bt.height_mm : 0);
-    if (top > topHeight) { topHeight = top; topBin = bin; }
-  }
-  return topBin;
-}
-
-// Find the topmost bin below the current slider height at a position.
-// This is the bin the user sees "underneath" the current layer — dropping
-// onto the cell places the new bin on top of it, beside any existing bins
-// already at that layer.
-function findBinBelowSlider(stack, typeLookup, binHeights, sliderMm) {
-  let best = null;
-  let bestTop = -1;
-  for (const bin of (stack.bins || [])) {
-    const base = binHeights[bin.id] || 0;
-    const bt = typeLookup[bin.bin_type_id];
-    const top = base + (bt ? bt.height_mm : 0);
-    // Must be entirely below the slider level
-    if (top <= sliderMm && top > bestTop) {
-      bestTop = top;
-      best = bin;
-    }
-  }
-  // If slider is at 0, find the tallest floor-level bin
-  if (!best && sliderMm === 0) {
-    let bestHeight = -1;
-    for (const bin of (stack.bins || [])) {
-      if (bin.bottom_id) continue;
-      const bt = typeLookup[bin.bin_type_id];
-      const h = bt ? bt.height_mm : 0;
-      if (h > bestHeight) { bestHeight = h; best = bin; }
-    }
-  }
-  return best;
 }
 
 // ─── Snap drag hook ──────────────────────────────────────────
@@ -497,15 +454,48 @@ function FloorGrid({
                     })}
 
                     {/* Actual items (layout slots or bins depending on mode) */}
-                    {cellEntries.map(({ item, fp }) => {
-                      const itemW = (fp.cellW / unit) * cellPx;
-                      const itemH = (fp.cellH / unit) * cellPx;
-                      const availW = cw - itemW;
-                      const availH = rh - itemH;
-                      const ox = item.offset_x ?? 0.5;
-                      const oy = item.offset_y ?? 0.5;
-                      const left = Math.max(0, availW) * ox;
-                      const top = Math.max(0, availH) * oy;
+                    {/* Pre-compute parent positions for child offset calculation */}
+                    {(() => {
+                      // Build lookup: item.id -> { itemW, itemH, left, top } for parent-relative positioning
+                      const posCache = {};
+                      const getItemPos = (entry) => {
+                        if (posCache[entry.item.id]) return posCache[entry.item.id];
+                        const w = (entry.fp.cellW / unit) * cellPx;
+                        const h = (entry.fp.cellH / unit) * cellPx;
+                        const ox = entry.item.offset_x ?? 0.5;
+                        const oy = entry.item.offset_y ?? 0.5;
+
+                        // If this item has a parent in the same cell, position relative to parent
+                        const parentEntry = entry.item.bottom_id
+                          ? cellEntries.find(e => e.item.id === entry.item.bottom_id)
+                          : null;
+
+                        let l, t;
+                        if (parentEntry) {
+                          const pp = getItemPos(parentEntry);
+                          // Available space = parent size - this item size
+                          const aW = Math.max(0, pp.w - w);
+                          const aH = Math.max(0, pp.h - h);
+                          l = pp.left + aW * ox;
+                          t = pp.top + aH * oy;
+                        } else {
+                          // Floor-level bin: position relative to cell
+                          l = Math.max(0, cw - w) * ox;
+                          t = Math.max(0, rh - h) * oy;
+                        }
+
+                        posCache[entry.item.id] = { w, h, left: l, top: t };
+                        return posCache[entry.item.id];
+                      };
+                      // Pre-compute all positions (parents before children)
+                      cellEntries.forEach(e => getItemPos(e));
+
+                      return cellEntries.map(({ item, fp }) => {
+                      const ip = posCache[item.id];
+                      const itemW = ip.w;
+                      const itemH = ip.h;
+                      const left = ip.left;
+                      const top = ip.top;
                       const bt = typeLookup[item.bin_type_id];
                       const dragId = item.bin_id || `slot-${item.id}`;
                       // Higher bins render on top (z-index 20 + height tier)
@@ -518,7 +508,7 @@ function FloorGrid({
                       const isBelow = belowBinIds?.has(item.id);
                       // Hide bins above the current slider level
                       if (!isActive && !isBelow && activeBinIds) return null;
-                      const liftPx = (level - 1) * 18;
+                      const liftPx = (level - 1) * 9;
 
                       // Active: full color + glow + depth shadow
                       // Inactive: grayed out, no glow, sits behind
@@ -534,7 +524,7 @@ function FloorGrid({
                           key={dragId}
                           id={`drag-${dragId}`}
                           className={cn(
-                            "absolute rounded select-none",
+                            "absolute rounded select-none transition-all duration-150 overflow-hidden",
                             isActive ? "cursor-grab active:cursor-grabbing" : "pointer-events-none",
                           )}
                           style={{
@@ -555,62 +545,45 @@ function FloorGrid({
                           onDragOver={isActive && onDropOnBin ? (e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            e.currentTarget.classList.add('ring-2', 'ring-amber-400', 'ring-inset');
+                            e.currentTarget.classList.add('ring-2', 'ring-amber-400', 'ring-inset', 'brightness-150', 'scale-105');
                           } : undefined}
                           onDragLeave={isActive && onDropOnBin ? (e) => {
-                            e.currentTarget.classList.remove('ring-2', 'ring-amber-400', 'ring-inset');
+                            e.currentTarget.classList.remove('ring-2', 'ring-amber-400', 'ring-inset', 'brightness-150', 'scale-105');
                           } : undefined}
                           onDrop={isActive && onDropOnBin ? (e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            e.currentTarget.classList.remove('ring-2', 'ring-amber-400', 'ring-inset');
+                            e.currentTarget.classList.remove('ring-2', 'ring-amber-400', 'ring-inset', 'brightness-150', 'scale-105');
                             e.currentTarget.parentElement.classList.remove('ring-2', 'ring-primary', 'ring-inset');
                             onDropOnBin(e, item);
                           } : undefined}
                         >
-                          {/* Center: bin_id (large) */}
-                          {isActive && item.bin_id && (
-                            <span className="absolute inset-0 flex items-center justify-center text-[15px] font-mono font-bold pointer-events-none"
-                              style={{ color: 'rgba(255,255,255,0.8)' }}
-                            >
-                              {item.bin_id}
-                            </span>
-                          )}
-                          {/* Top-left: grid position */}
                           {isActive && (
-                            <span className="absolute top-0.5 left-1 text-[10px] font-mono pointer-events-none"
-                              style={{ color: 'rgba(255,255,255,0.5)' }}
-                            >
-                              {pos}
-                            </span>
-                          )}
-                          {/* Top-right: bin name */}
-                          {isActive && item.name && (
-                            <span className="absolute top-0.5 right-1 text-[10px] font-semibold pointer-events-none truncate max-w-[60%] text-right"
-                              style={{ color: 'rgba(255,255,255,0.9)' }}
-                            >
-                              {item.name}
-                            </span>
-                          )}
-                          {/* Bottom-left: type name */}
-                          {isActive && bt?.name && (
-                            <span className="absolute bottom-0.5 left-1 text-[10px] pointer-events-none truncate max-w-[60%]"
-                              style={{ color: 'rgba(255,255,255,0.6)' }}
-                            >
-                              {bt.name}
-                            </span>
-                          )}
-                          {/* Bottom-right: stack level (always visible) */}
-                          {binLevels?.[item.id] && (
-                            <span className="absolute bottom-0.5 right-1 text-[10px] font-mono pointer-events-none"
-                              style={{ color: isActive ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}
-                            >
-                              Z{binLevels[item.id]}
-                            </span>
+                            <div className="absolute inset-0 pointer-events-none @container" style={{ containerType: 'size' }}>
+                              {/* Top-left: position */}
+                              <span className="absolute top-0.5 left-1 text-[10px] font-mono whitespace-nowrap hidden @[60px]:block" style={{ color: 'rgba(255,255,255,0.5)' }}>{pos}</span>
+                              {/* Top-right: name */}
+                              {item.name && (
+                                <span className="absolute top-0.5 right-1 text-[10px] font-semibold whitespace-nowrap hidden @[120px]:block" style={{ color: 'rgba(255,255,255,0.9)' }}>{item.name}</span>
+                              )}
+                              {/* Center: bin_id */}
+                              {item.bin_id && (
+                                <span className="absolute inset-0 flex items-center justify-center text-[15px] font-mono font-bold whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.8)' }}>{item.bin_id}</span>
+                              )}
+                              {/* Bottom-left: type */}
+                              {bt?.name && (
+                                <span className="absolute bottom-0.5 left-1 text-[10px] whitespace-nowrap hidden @[100px]:block" style={{ color: 'rgba(255,255,255,0.6)' }}>{bt.name}</span>
+                              )}
+                              {/* Bottom-right: Z level */}
+                              {binLevels?.[item.id] && (
+                                <span className="absolute bottom-0.5 right-1 text-[10px] font-mono whitespace-nowrap hidden @[60px]:block" style={{ color: 'rgba(255,255,255,0.5)' }}>Z{binLevels[item.id]}</span>
+                              )}
+                            </div>
                           )}
                         </div>
                       );
-                    })}
+                    });
+                    })()}
                   </div>
                 );
               })}
@@ -893,82 +866,162 @@ function RoomGrid({ room, tab, onTabChange, onBack, onRoomUpdate }) {
     } catch { setError('Failed to add column'); }
   };
 
-  // Drop unassigned bin onto empty grid cell (floor level)
+  // ── Stacking helpers ──────────────────────────────────────
+
+  // Place multiple siblings side-by-side: perpendicular to parent, clustered near center
+  const layoutSiblings = async (parentBin, allSiblings, newBinId, stackId) => {
+    const orientation = parentBin.orientation === 'updown' ? 'leftright' : 'updown';
+    const bt = typeLookup[parentBin.bin_type_id];
+    const parentW = bt ? bt.width_mm : 1;
+    const parentD = bt ? bt.depth_mm : 1;
+    const spreadX = parentBin.orientation === 'updown' ? parentW >= parentD : parentD >= parentW;
+
+    const total = allSiblings.length + 1; // +1 for the new bin
+    // Spread evenly across full range — offset controls position within
+    // (cellDim - binDim) available space, so 0=left edge, 1=right edge
+    const offsets = total === 1 ? [0.5] : Array.from({ length: total }, (_, i) => i / (total - 1));
+
+    // Reposition existing siblings
+    const updates = allSiblings.map((sib, i) => binsAPI.update(sib.bin_id, {
+      orientation,
+      ...(spreadX ? { offset_x: offsets[i] } : { offset_y: offsets[i] }),
+    }));
+    await Promise.all(updates);
+
+    // Place new bin at last offset
+    const newOffset = offsets[total - 1];
+    await binsAPI.update(newBinId, {
+      stack_id: stackId,
+      bottom_id: parentBin.id,
+      orientation,
+      ...(spreadX ? { offset_x: newOffset, offset_y: 0.5 } : { offset_x: 0.5, offset_y: newOffset }),
+    });
+  };
+
+  // Get floor area of a bin type in mm²
+  const binArea = (bin) => {
+    const bt = typeLookup[bin.bin_type_id];
+    return bt ? bt.width_mm * bt.depth_mm : 0;
+  };
+
+  // Check if adding a new bin on top of parentBin (alongside existing siblings) exceeds the parent's area (±10%)
+  const checkFit = (droppedBin, parentBin, stack) => {
+    const parentArea = binArea(parentBin);
+    if (!parentArea) return null; // can't check, allow it
+
+    const siblings = (stack?.bins || []).filter(b => b.bottom_id === parentBin.id && b.bin_id !== droppedBin.bin_id);
+    const combinedArea = siblings.reduce((sum, sib) => sum + binArea(sib), 0) + binArea(droppedBin);
+    const limit = parentArea * 1.1; // 10% tolerance
+
+    if (combinedArea > limit) {
+      return `Won't fit: combined top area (${Math.round(combinedArea / 100)}cm²) exceeds base bin (${Math.round(parentArea / 100)}cm²)`;
+    }
+    return null; // fits
+  };
+
+  // Shared logic: place bin on top of a parent with sibling awareness
+  const placeOnParent = async (binId, parentBin, stack) => {
+    const siblings = (stack?.bins || []).filter(b => b.bottom_id === parentBin.id && b.bin_id !== binId);
+    if (siblings.length > 0) {
+      await layoutSiblings(parentBin, siblings, binId, parentBin.stack_id);
+    } else {
+      // Single bin on top — same orientation as parent
+      await binsAPI.update(binId, {
+        stack_id: parentBin.stack_id,
+        bottom_id: parentBin.id,
+        orientation: parentBin.orientation,
+        offset_x: 0.5,
+        offset_y: 0.5,
+      });
+    }
+  };
+
+  // Find the parent for a cell drop based on slider height:
+  // - If active bins exist, return their shared parent (place as sibling)
+  // - If all bins below slider, return topmost bin (place on top)
+  // - If no bins, return null (floor level)
+  const findCellDropParent = (stack) => {
+    const bins = stack?.bins || [];
+    if (bins.length === 0) return null;
+
+    // Check for active bins at this position
+    const activeBins = bins.filter(b => activeBinIds?.has(b.id));
+    if (activeBins.length > 0) {
+      // Place as sibling — same parent as active bins
+      const parentId = activeBins[0].bottom_id;
+      if (!parentId) return null; // active bins are at floor level
+      return bins.find(b => b.id === parentId) || null;
+    }
+
+    // No active bins — all below slider. Place on top of topmost bin.
+    let topmost = null;
+    let topHeight = -1;
+    for (const bin of bins) {
+      const base = binHeights[bin.id] || 0;
+      const bt = typeLookup[bin.bin_type_id];
+      const top = base + (bt ? bt.height_mm : 0);
+      if (top > topHeight) { topHeight = top; topmost = bin; }
+    }
+    return topmost;
+  };
+
+  // ── Drop on Cell ────────────────────────────────────────────
+
   const handleDropOnCell = async (e, position) => {
     const binId = e.dataTransfer.getData('text/bin-id');
     if (!binId) return;
     try {
       const stackId = await ensureStack(position);
       const stack = stackMap[position] || (await stacksAPI.getOne(stackId)).data;
-      const slots = stack.layout_slots || [];
-      const bin = unassignedBins.find(b => b.bin_id === binId);
-      const matchingSlot = bin ? slots.find(s => s.bin_type_id === bin.bin_type_id) : null;
+      const droppedBin = unassignedBins.find(b => b.bin_id === binId);
+      const parent = findCellDropParent(stack);
 
-      // Cell drop = floor level (side by side). Use handleDropOnBin for stacking.
-      const updateData = { stack_id: stackId, bottom_id: null };
-      if (matchingSlot) {
-        updateData.orientation = matchingSlot.orientation;
-        updateData.offset_x = matchingSlot.offset_x;
-        updateData.offset_y = matchingSlot.offset_y;
+      if (!parent) {
+        // Floor level placement — enforce bin type match with layout slot
+        const slots = stack.layout_slots || [];
+        const matchingSlot = droppedBin ? slots.find(s => s.bin_type_id === droppedBin.bin_type_id) : null;
+
+        if (slots.length > 0 && !matchingSlot) {
+          const slotTypes = slots.map(s => typeLookup[s.bin_type_id]?.name).filter(Boolean).join(', ');
+          setError(`This cell expects: ${slotTypes}`);
+          return;
+        }
+
+        const updateData = { stack_id: stackId, bottom_id: null };
+        if (matchingSlot) {
+          updateData.orientation = matchingSlot.orientation;
+          updateData.offset_x = matchingSlot.offset_x;
+          updateData.offset_y = matchingSlot.offset_y;
+        }
+        await binsAPI.update(binId, updateData);
+      } else {
+        // Stacking — check fit
+        if (droppedBin) {
+          const fitError = checkFit(droppedBin, parent, stack);
+          if (fitError) { setError(fitError); return; }
+        }
+        await placeOnParent(binId, parent, stack);
       }
-      await binsAPI.update(binId, updateData);
       fetchData();
     } catch { setError('Failed to assign bin'); }
   };
 
-  // Drop unassigned bin onto existing grid bin (stack on top)
+  // ── Drop on Bin ─────────────────────────────────────────────
+
   const handleDropOnBin = async (e, targetBin) => {
     const binId = e.dataTransfer.getData('text/bin-id');
     if (!binId || binId === targetBin.bin_id) return;
     try {
-      // Find existing siblings (other bins already on top of the same target)
+      const droppedBin = unassignedBins.find(b => b.bin_id === binId);
       const stack = stacks.find(s => s.id === targetBin.stack_id);
-      const siblings = (stack?.bins || []).filter(b => b.bottom_id === targetBin.id && b.bin_id !== binId);
 
-      // Orient perpendicular to target bin
-      const orientation = targetBin.orientation === 'updown' ? 'leftright' : 'updown';
-
-      const totalAtLevel = siblings.length + 1;
-      if (totalAtLevel >= 2) {
-        const targetBt = typeLookup[targetBin.bin_type_id];
-        const parentW = targetBt ? targetBt.width_mm : 1;
-        const parentD = targetBt ? targetBt.depth_mm : 1;
-        const spreadX = targetBin.orientation === 'updown' ? parentW >= parentD : parentD >= parentW;
-
-        // Cluster bins near center with small gaps (step=0.12 per bin)
-        const step = 0.12;
-        const start = 0.5 - step * (totalAtLevel - 1) / 2;
-        const offsets = Array.from({ length: totalAtLevel }, (_, i) =>
-          Math.min(1, Math.max(0, start + step * i))
-        );
-
-        // Reposition existing siblings
-        const updates = siblings.map((sib, i) => {
-          const data = {
-            orientation,
-            ...(spreadX ? { offset_x: offsets[i] } : { offset_y: offsets[i] }),
-          };
-          return binsAPI.update(sib.bin_id, data);
-        });
-        await Promise.all(updates);
-
-        // New bin gets the last offset
-        const newOffset = offsets[totalAtLevel - 1];
-        await binsAPI.update(binId, {
-          stack_id: targetBin.stack_id,
-          bottom_id: targetBin.id,
-          orientation,
-          ...(spreadX ? { offset_x: newOffset, offset_y: 0.5 } : { offset_x: 0.5, offset_y: newOffset }),
-        });
-      } else {
-        await binsAPI.update(binId, {
-          stack_id: targetBin.stack_id,
-          bottom_id: targetBin.id,
-          orientation,
-          offset_x: 0.5,
-          offset_y: 0.5,
-        });
+      // Fit check
+      if (droppedBin) {
+        const fitError = checkFit(droppedBin, targetBin, stack);
+        if (fitError) { setError(fitError); return; }
       }
+
+      await placeOnParent(binId, targetBin, stack);
       fetchData();
     } catch { setError('Failed to stack bin'); }
   };
@@ -1083,7 +1136,7 @@ function RoomGrid({ room, tab, onTabChange, onBack, onRoomUpdate }) {
       <div
         ref={containerRef}
         className={cn(
-          "bg-neutral-950 rounded-xl p-4 sm:p-6 border border-neutral-800 overflow-x-auto",
+          "bg-neutral-950 rounded-xl p-4 sm:p-6 border border-neutral-800",
           tab === 'layout' ? "flex gap-2" : "block"
         )}
       >
@@ -1262,6 +1315,7 @@ function RoomGrid({ room, tab, onTabChange, onBack, onRoomUpdate }) {
           </Button>
         </DialogFooter>
       </Dialog>
+
     </div>
   );
 }

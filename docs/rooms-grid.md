@@ -95,12 +95,44 @@ The grid is rendered by a shared `FloorGrid` component used by both tabs. It acc
 - Each bin is a draggable chip with bin type name and hash ID.
 - Uses HTML5 drag-and-drop API (`draggable`, `onDragStart` sets `text/bin-id` data).
 
-#### Drag to Assign
+#### Drag-and-Drop Stacking Rules
 
-- Grid cells are drop targets (`onDragOver`, `onDrop`).
-- Visual feedback: drop target highlights with a primary-color ring on drag over.
-- On drop: assigns the bin to the cell's stack via `PUT /api/bins/{bin_id}` with `stack_id`.
-- Stack is auto-created if the cell has none.
+Both **cells** and **bins** are valid drop targets. They have distinct behaviors:
+
+**Drop on Cell:**
+
+1. **Floor level (no bins, or slider at 0):**
+   - Place bin at floor (`bottom_id = null`).
+   - **Type enforcement:** bin must match the layout slot's `bin_type_id`. Mismatches show an error toast and reject the drop.
+
+2. **Active bins visible in cell:**
+   - Place as **sibling** — same parent as the active bins (`bottom_id = active_bins[0].bottom_id`).
+   - This puts the new bin next to existing bins at that level, on top of the same parent.
+
+3. **All bins below slider (cell grayed out, no active bins):**
+   - Place on top of the **topmost bin** in the stack (`bottom_id = topmost.id`).
+
+**Drop on Bin:**
+
+- Always stack on top of that specific bin (`bottom_id = target.id`).
+- Works regardless of slider position, as long as the target bin is visible/active.
+
+**Stability Warning:**
+
+- When placing a bin with a larger footprint on top of a smaller bin, a confirmation dialog warns about stability concerns. The user must confirm before the placement proceeds.
+
+**Visual Feedback:**
+
+- Bins highlight with an **amber ring** on drag-over.
+- Cells highlight with a **primary-color ring** on drag-over.
+- Bin drop events call `e.stopPropagation()` so they don't also trigger the cell handler.
+
+#### Sibling Auto-Layout
+
+When 2+ bins share the same parent (`bottom_id`):
+- **Orientation:** perpendicular to the parent bin.
+- **Positioning:** clustered near center with a small gap (0.12 offset step). Existing siblings are repositioned to distribute evenly.
+- **Spread axis:** along the parent's longer footprint dimension.
 
 #### Unassign from Grid
 
@@ -148,11 +180,11 @@ Bins can be dragged within their cell to reposition. Implemented in `useDrag()` 
 
 Bins stacked via `bottom_id` are rendered with depth cues:
 
-- **Isometric offset:** Each Z level shifts the bin 3px up and left. Z1 sits at true position, Z2 is offset (-3,-3), Z3 is (-6,-6), etc. This reveals a sliver of lower bins at the bottom-right edge.
-- **Drop shadows:** Shadow size and opacity scale with Z level. Z1 gets a subtle `0 1px 3px` shadow; higher bins cast larger, more diffuse shadows downward.
+- **Isometric offset:** Each Z level shifts the bin 18px up and left. Z1 sits at true position, Z2 is offset (-18,-18), etc. This reveals lower bins at the bottom-right edge.
+- **Active/below classification:** The height slider defines a cross-section. Bins the slider cuts through are **active** (full color, interactive). Bins entirely below are **grayed out** (muted color, only Z label visible, `pointer-events-none`). Bins entirely above are **hidden**.
 - **Z-index:** Higher bins render on top (`zIndex = 20 + heightMm/10`).
 - **Z label:** Bottom-right corner shows `Z1`, `Z2`, etc. from `computeBinLevels()` which traverses the `bottom_id` linked list.
-- **Height slider:** Filters bins by vertical cross-section. Ghost outlines (layout slot guides) are hidden when the slider is above floor level.
+- **Height slider:** Range goes from 0 to the true top of the tallest bin (base + height). Ghost outlines (layout slot guides) are hidden when the slider is above floor level or when bins occupy the position.
 
 ## Future Considerations
 
